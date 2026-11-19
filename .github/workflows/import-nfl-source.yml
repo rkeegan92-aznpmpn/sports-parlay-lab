@@ -1,0 +1,33 @@
+name: Import NFL Parlay Lab source
+on:
+  push:
+    paths:
+      - .github/workflows/import-nfl-source.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract uploaded source archive
+        run: |
+          set -euo pipefail
+          test -f nfl-parlay-lab-main.zip
+          unzip -t nfl-parlay-lab-main.zip >/dev/null
+          mkdir -p /tmp/nfl-import
+          unzip -q nfl-parlay-lab-main.zip -d /tmp/nfl-import
+          test -f /tmp/nfl-import/nfl-parlay-lab-main/package.json
+          cp -a /tmp/nfl-import/nfl-parlay-lab-main/. ./
+          rm -f nfl-parlay-lab-main.zip
+          test -f nfl-parlay-lab/package.json
+      - name: Commit imported project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import complete NFL Parlay Lab project"
+            git push
+          fi
