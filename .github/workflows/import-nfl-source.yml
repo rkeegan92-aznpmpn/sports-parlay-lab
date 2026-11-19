@@ -21,6 +21,8 @@ jobs:
           test -f /tmp/nfl-import/nfl-parlay-lab-main/package.json
           cp -a /tmp/nfl-import/nfl-parlay-lab-main/. ./
           rm -f nfl-parlay-lab-main.zip
+          # The default Actions token cannot add workflow files.
+          find .github/workflows -type f ! -name 'import-nfl-source.yml' -delete
           test -f nfl-parlay-lab/package.json
       - name: Commit imported project
         run: |
