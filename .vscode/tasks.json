@@ -1,0 +1,22 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "NFL Parlay Lab: Dev Server",
+			"type": "shell",
+			"command": "cd nfl-parlay-lab && npm run dev -- --hostname 0.0.0.0",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "NFL Parlay Lab: Typecheck",
+			"type": "shell",
+			"command": "cd nfl-parlay-lab && npm run typecheck",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			]
+		}
+	]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "nfl-parlay-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.6 <23"
+  },
+  "scripts": {
+    "dev": "node scripts/run-app.mjs dev",
+    "build": "next build",
+    "start": "node scripts/run-app.mjs start",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "verify:live": "node --experimental-strip-types scripts/verify-live.ts",
+    "track:forecasts": "node --experimental-strip-types scripts/track-forecasts.ts",
+    "audit:forecasts": "node --experimental-strip-types scripts/audit-forecasts.ts",
+    "check:api": "node --experimental-strip-types scripts/check-api.ts",
+    "verify:free": "node --experimental-strip-types scripts/verify-free.ts",
+    "test:e2e": "python3 tests/e2e/manual_workflow.py && python3 tests/e2e/grading_workflow.py && python3 tests/e2e/fanduel_workflow.py && python3 tests/e2e/first_quarter_workflow.py && python3 tests/e2e/research_preview_workflow.py && python3 tests/e2e/market_explorer_workflow.py && python3 tests/e2e/q1_game_selector_workflow.py && python3 tests/e2e/multi_provider_workflow.py && python3 tests/e2e/propline_workflow.py && python3 tests/e2e/paper_workflow.py && python3 tests/e2e/one_touch_workflow.py",
+    "test:e2e:live-free": "python3 tests/e2e/live_free.py",
+    "verify:evaluation": "node --experimental-strip-types scripts/verify-evaluation.ts",
+    "audit:readiness": "node --experimental-strip-types scripts/audit-readiness.ts",
+    "verify:propline": "node --experimental-strip-types scripts/verify-propline.ts",
+    "verify:fanduel": "node --experimental-strip-types scripts/verify-fanduel.ts",
+    "audit:first-quarter": "node --experimental-strip-types scripts/audit-first-quarter.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "typescript": "^5.6.0"
+  }
+}

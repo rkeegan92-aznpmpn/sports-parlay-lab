@@ -1,0 +1,28 @@
+{
+  "name": "nfl-parlay-lab-workspace",
+  "private": true,
+  "engines": {
+    "node": ">=22.6 <23"
+  },
+  "scripts": {
+    "postinstall": "npm ci --include=dev --prefix nfl-parlay-lab",
+    "dev": "npm --prefix nfl-parlay-lab run dev -- --hostname 0.0.0.0 --port 3000",
+    "start": "npm --prefix nfl-parlay-lab run start -- --hostname 0.0.0.0 --port 3000",
+    "codespace:start": "node scripts/codespace-start.mjs",
+    "build": "npm --prefix nfl-parlay-lab run build",
+    "test": "node --test scripts/*.test.mjs && npm --prefix nfl-parlay-lab run test",
+    "typecheck": "npm --prefix nfl-parlay-lab run typecheck",
+    "setup:env": "node scripts/setup-env.mjs",
+    "verify:live": "npm --prefix nfl-parlay-lab run verify:live --",
+    "track:forecasts": "npm --prefix nfl-parlay-lab run track:forecasts --",
+    "audit:forecasts": "npm --prefix nfl-parlay-lab run audit:forecasts --",
+    "check:api": "npm --prefix nfl-parlay-lab run check:api --",
+    "verify:free": "npm --prefix nfl-parlay-lab run verify:free --",
+    "test:e2e": "npm --prefix nfl-parlay-lab run test:e2e",
+    "test:e2e:live-free": "npm --prefix nfl-parlay-lab run test:e2e:live-free",
+    "verify:evaluation": "npm --prefix nfl-parlay-lab run verify:evaluation --",
+    "audit:readiness": "npm --prefix nfl-parlay-lab run audit:readiness --",
+    "verify:fanduel": "npm --prefix nfl-parlay-lab run verify:fanduel",
+    "audit:first-quarter": "npm --prefix nfl-parlay-lab run audit:first-quarter --"
+  }
+}

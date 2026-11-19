@@ -1,0 +1,211 @@
+{
+  "provenance": "Previously saved documented keyless get_sample_props responses; not authenticated REST, stale now, never production picks. Captured at payload meta.as_of on 2026-11-12 UTC. No credential supplied.",
+  "responses": [
+    {
+      "data": [
+        {
+          "id": "734.196706744-48777717",
+          "sport": "football",
+          "league": "NFL",
+          "event_id": "36275757",
+          "event_name": "Washington Commanders @ New York Giants",
+          "starts_at": "2026-11-13T01:16:00.000Z",
+          "player": "Antonio Williams",
+          "team": null,
+          "stat": "receiving_yards",
+          "period": "q1",
+          "line": 3.5,
+          "over_american": -118,
+          "under_american": -112,
+          "over_decimal": 1.8475,
+          "under_decimal": 1.8929,
+          "market_status": "open",
+          "changed_at": "2026-11-11T21:33:19.744Z",
+          "observed_at": "2026-11-12T00:05:55.822Z",
+          "move": {
+            "open": {
+              "line": 4.5,
+              "over_american": -122,
+              "under_american": -108,
+              "fair_over": 0.5142,
+              "at": "2026-11-09T19:06:44.549Z"
+            },
+            "current": {
+              "line": 3.5,
+              "over_american": -118,
+              "under_american": -112,
+              "fair_over": 0.5061,
+              "at": "2026-11-11T21:33:19.744Z"
+            },
+            "line_move": -1,
+            "line_direction": "down",
+            "fair_over_move_pp": -0.81,
+            "price_direction": "toward_under",
+            "line_moves": 5,
+            "price_moves": 9,
+            "last_moved_at": "2026-11-11T21:33:19.744Z",
+            "last_line_moved_at": "2026-11-11T14:58:08.135Z",
+            "status": "open",
+            "observations": 15
+          }
+        },
+        {
+          "id": "734.196706780-48777717",
+          "sport": "football",
+          "league": "NFL",
+          "event_id": "36275757",
+          "event_name": "Washington Commanders @ New York Giants",
+          "starts_at": "2026-11-13T01:16:00.000Z",
+          "player": "Antonio Williams",
+          "team": null,
+          "stat": "receiving_yards",
+          "period": "q2",
+          "line": 6.5,
+          "over_american": -120,
+          "under_american": -110,
+          "over_decimal": 1.8333,
+          "under_decimal": 1.9091,
+          "market_status": "open",
+          "changed_at": "2026-11-11T21:33:19.744Z",
+          "observed_at": "2026-11-12T00:05:55.822Z",
+          "move": {
+            "open": {
+              "line": 8.5,
+              "over_american": -114,
+              "under_american": -114,
+              "fair_over": 0.5,
+              "at": "2026-11-09T19:06:44.549Z"
+            },
+            "current": {
+              "line": 6.5,
+              "over_american": -120,
+              "under_american": -110,
+              "fair_over": 0.5101,
+              "at": "2026-11-11T21:33:19.744Z"
+            },
+            "line_move": -2,
+            "line_direction": "down",
+            "fair_over_move_pp": 1.01,
+            "price_direction": "toward_over",
+            "line_moves": 4,
+            "price_moves": 10,
+            "last_moved_at": "2026-11-11T21:33:19.744Z",
+            "last_line_moved_at": "2026-11-11T21:33:19.744Z",
+            "status": "open",
+            "observations": 15
+          }
+        }
+      ],
+      "meta": {
+        "sample": true,
+        "delay_seconds": 300,
+        "as_of": "2026-11-12T00:05:55.822Z",
+        "rows": 2,
+        "note": "At most 10 delayed rows, no paging, no key needed. Full filters, paging, history and the change feed need a key."
+      }
+    },
+    {
+      "data": [
+        {
+          "id": "734.196704787-103924287",
+          "sport": "football",
+          "league": "NFL",
+          "event_id": "36275757",
+          "event_name": "Washington Commanders @ New York Giants",
+          "starts_at": "2026-11-13T01:16:00.000Z",
+          "player": "J.J McCarthy",
+          "team": null,
+          "stat": "passing_yards",
+          "period": "game",
+          "line": 210.5,
+          "over_american": -114,
+          "under_american": -114,
+          "over_decimal": 1.8772,
+          "under_decimal": 1.8772,
+          "market_status": "open",
+          "changed_at": "2026-11-09T06:07:49.157Z",
+          "observed_at": "2026-11-12T00:06:28.702Z",
+          "move": {
+            "open": {
+              "line": 210.5,
+              "over_american": -114,
+              "under_american": -114,
+              "fair_over": 0.5,
+              "at": "2026-11-09T06:07:49.157Z"
+            },
+            "current": {
+              "line": 210.5,
+              "over_american": -114,
+              "under_american": -114,
+              "fair_over": 0.5,
+              "at": "2026-11-09T06:07:49.157Z"
+            },
+            "line_move": 0,
+            "line_direction": "flat",
+            "fair_over_move_pp": 0,
+            "price_direction": "flat",
+            "line_moves": 0,
+            "price_moves": 0,
+            "last_moved_at": null,
+            "last_line_moved_at": null,
+            "status": "open",
+            "observations": 1
+          }
+        },
+        {
+          "id": "734.196704800-103924287",
+          "sport": "football",
+          "league": "NFL",
+          "event_id": "36275757",
+          "event_name": "Washington Commanders @ New York Giants",
+          "starts_at": "2026-11-13T01:16:00.000Z",
+          "player": "J.J McCarthy",
+          "team": null,
+          "stat": "passing_yards",
+          "period": "q1",
+          "line": 45.5,
+          "over_american": -112,
+          "under_american": -118,
+          "over_decimal": 1.8929,
+          "under_decimal": 1.8475,
+          "market_status": "open",
+          "changed_at": "2026-11-10T23:43:46.247Z",
+          "observed_at": "2026-11-12T00:06:28.702Z",
+          "move": {
+            "open": {
+              "line": 43.5,
+              "over_american": -118,
+              "under_american": -112,
+              "fair_over": 0.5061,
+              "at": "2026-11-09T19:06:44.549Z"
+            },
+            "current": {
+              "line": 45.5,
+              "over_american": -112,
+              "under_american": -118,
+              "fair_over": 0.4939,
+              "at": "2026-11-10T23:43:46.247Z"
+            },
+            "line_move": 2,
+            "line_direction": "up",
+            "fair_over_move_pp": -1.22,
+            "price_direction": "toward_under",
+            "line_moves": 2,
+            "price_moves": 3,
+            "last_moved_at": "2026-11-10T23:43:46.247Z",
+            "last_line_moved_at": "2026-11-10T23:43:46.247Z",
+            "status": "open",
+            "observations": 6
+          }
+        }
+      ],
+      "meta": {
+        "sample": true,
+        "delay_seconds": 300,
+        "as_of": "2026-11-12T00:06:28.702Z",
+        "rows": 2,
+        "note": "At most 10 delayed rows, no paging, no key needed. Full filters, paging, history and the change feed need a key."
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: nfl-parlay-lab
+    runtime: node
+    plan: starter
+    branch: fix/live-readiness-persistent-storage
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: NODE_ENV
+        value: production
+      - key: ODDS_API_KEY
+        sync: false
+      - key: DB_PATH
+        value: /var/data/parlay.db
+      - key: REQUIRE_PERSISTENT_DB
+        value: "1"
+    disk:
+      name: parlay-data
+      mountPath: /var/data
+      sizeGB: 1

@@ -1,0 +1,17 @@
+{
+  "name": "NFL Parlay Lab",
+  "forwardPorts": [
+    3000
+  ],
+  "portsAttributes": {
+    "3000": {
+      "label": "NFL Parlay Lab",
+      "onAutoForward": "openBrowser",
+      "requireLocalPort": true,
+      "protocol": "http"
+    }
+  },
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm install",
+  "postStartCommand": "npm run codespace:start"
+}
