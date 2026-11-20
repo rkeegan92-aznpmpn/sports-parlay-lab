@@ -41,7 +41,7 @@ export async function pick6Batch(db:Db,keys:ProviderKeys,target:BatchTarget,test
  // Both buttons analyze the same PropLine cache. Other workspaces retain multi-provider analysis.
  const analysis=await multiResearch(db,{fanduelapi:'','odds-api':'',propline:keys.propline??''},'FULL','ALL',f,clock(),testMode,new Set(slate.gameIds));
  const options=analysis.options as ResearchSlot<Ticket>[],records:BatchRecord[]=[],notes:string[]=[];
- progress({stage:'save',message:target==='paper'?'Capturing eligible $10 virtual tickets atomically, with duplicate-wager checks…':'Saving eligible research tickets and pending grades, with duplicate-save checks…'});
+ progress({stage:'save',message:target==='paper'?'Capturing eligible virtual tickets atomically, with duplicate-wager checks…':'Saving eligible research tickets and pending grades, with duplicate-save checks…'});
  if(target==='paper'){
   const captured=await capturePaperSlate(db,slate,keys,f,clock(),'manual',undefined,async()=>({options}));notes.push(...captured.notes);
   for(const slot of options){const rows=db.prepare('SELECT id,created_at,slate_key,ticket_json FROM paper_wagers WHERE strategy=? ORDER BY id').all(slot.label) as {id:number;created_at:number;slate_key:string;ticket_json:string}[];

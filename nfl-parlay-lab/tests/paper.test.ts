@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import {SCHEMA} from '../src/server/db.ts';
-import {PAPER_SCHEMA} from '../src/server/paperSchema.ts';
-import {paperSelection,savePaperSelection,resolvePaperSelection,paperGames,capturePaperTicket,capturePaperSlate,paperDashboard,paperConfig,updatePaperConfig,paperWindow,paperSlates,previewPaper,gradePaperWagers,reconcilePaperLedger,paperReturn,type PaperSlate} from '../src/server/paper.ts';
+import {PAPER_SCHEMA,ensurePaperStake} from '../src/server/paperSchema.ts';
+import {paperSelection,savePaperSelection,resolvePaperSelection,paperGames,capturePaperTicket,capturePaperSlate,paperDashboard,paperConfig,updatePaperConfig,paperWindow,paperSlates,previewPaper,gradePaperWagers,reconcilePaperLedger,paperReturn,setPaperStake,paperStakeCents,type PaperSlate} from '../src/server/paper.ts';
 import {refreshPropLine} from '../src/server/propline.ts';
 import {paperColor,paperLabel,PAPER_STRATEGIES} from '../src/lib/paper.ts';
 import type {LegGrade} from '../src/server/savedGrades.ts';
@@ -124,5 +124,43 @@ test('multi-date scope reuses working four-option optimizer, retains max three/g
   const t=structuredClone(ticket),multi=structuredClone(scope),second=scope.gameIds[1],nextDay=new Date(Date.parse(kickoff)+86400000).toISOString();multi.games!.find(g=>g.id===second)!.commence_time=nextDay;multi.key='fixture:multi-date';
   for(const l of t.legs)if(l.gameId===second){l.kickoff=nextDay;l.quoteEvidence!.kickoff=nextDay;l.verification!.event.kickoff=nextDay;}
   const other=new Database(':memory:');other.exec(SCHEMA);try{assert.equal(capturePaperTicket(other,multi,'Safer',t,'manual',NOW).created,true);const invalid=structuredClone(t);invalid.legs[0].kickoff=new Date(Date.parse(invalid.legs[0].kickoff)+60000).toISOString();invalid.legs[0].quoteEvidence!.kickoff=invalid.legs[0].kickoff;invalid.legs[0].verification!.event.kickoff=invalid.legs[0].kickoff;assert.throws(()=>capturePaperTicket(other,multi,'Balanced',invalid,'manual',NOW),/mismatched/);}finally{other.close();}
+ }finally{db.close();}
+});
+
+test('paper stake defaults to $10, is adjustable for future wagers only, and drives debit, ledger note and payout',async()=>{
+ const {db,ticket}=await setup(true);try{
+  assert.equal(paperStakeCents(db),1000);
+  assert.equal(setPaperStake(db,'25'),2500);assert.equal(paperStakeCents(db),2500);
+  for(const bad of ['0','0.5','1000.01','abc',''])assert.throws(()=>setPaperStake(db,bad),/stake|\$|amount/i,bad);
+  assert.equal(paperStakeCents(db),2500);
+  const placed=capturePaperTicket(db,slate,'Safer',ticket,'manual',NOW);
+  const w=db.prepare('SELECT stake_cents FROM paper_wagers WHERE id=?').get(placed.id) as {stake_cents:number};assert.equal(w.stake_cents,2500);
+  assert.equal(paperDashboard(db).availableCents,97500);
+  assert.match((db.prepare("SELECT note FROM paper_ledger WHERE kind='stake'").get() as {note:string}).note,/^\$25 simulated wager/);
+  setPaperStake(db,'50');assert.equal((db.prepare('SELECT stake_cents FROM paper_wagers WHERE id=?').get(placed.id) as {stake_cents:number}).stake_cents,2500,'recorded wager keeps its stake');
+  putGrades(db,placed.id,grades(ticket.legs));const payout=Math.round(ticket.decimal*2500);const d=paperDashboard(db);assert.equal(d.availableCents,97500+payout);assert.equal(d.summary.profitCents,payout-2500);
+  assert.equal(paperReturn(ticket.legs,grades(ticket.legs),2500).returnCents,payout);
+  assert.equal(paperReturn(ticket.legs,grades(ticket.legs)).returnCents,Math.round(ticket.decimal*1000),'default stake argument stays $10');
+ }finally{db.close();}
+});
+test('legacy $10-only paper_wagers table is rebuilt in place: rows preserved, immutability kept, stake now flexible, idempotent',()=>{
+ const legacy=PAPER_SCHEMA.replace('CHECK(stake_cents BETWEEN 100 AND 100000)','CHECK(stake_cents=1000)').replace(",'Aggressive+','High Roller','Moonshot'",'').replace(",\n stake_cents INTEGER NOT NULL DEFAULT 1000",'').replace(", sport TEXT NOT NULL DEFAULT 'nfl'",'');
+ assert.ok(legacy.includes('stake_cents=1000')&&!legacy.includes('Moonshot'));
+ const db=new Database(':memory:');try{
+  db.exec(legacy);
+  const ins=db.prepare('INSERT INTO paper_wagers(slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+  ins.run('2026:9:2026-11-08',2026,9,'2026-11-08','Safer',1,'manual',1000,12.5,'[]','{}');ins.run('2026:9:2026-11-08',2026,9,'2026-11-08','Balanced',2,'manual',1000,40.25,'[]','{}');
+  assert.throws(()=>ins.run('s',2026,9,'d','Safer',3,'manual',2500,2,'[]','{}'),/CHECK/);
+  const before=db.prepare('SELECT * FROM paper_wagers ORDER BY id').all();
+  assert.deepEqual(ensurePaperStake(db as never),{rebuilt:true});
+  const after=db.prepare('SELECT id,slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json FROM paper_wagers ORDER BY id').all();
+  assert.deepEqual(after,before);
+  assert.equal((db.prepare('SELECT sport FROM paper_wagers WHERE id=1').get() as {sport:string}).sport,'nfl');
+  assert.equal((db.prepare('SELECT stake_cents FROM paper_settings WHERE id=1').get() as {stake_cents:number}).stake_cents,1000);
+  ins.run('2026:9:2026-11-15',2026,10,'2026-11-15','Aggressive+',3,'manual',2500,2,'[]','{}');
+  assert.throws(()=>ins.run('x',2026,9,'d','Safer',4,'manual',99,2,'[]','{}'),/CHECK/);
+  assert.throws(()=>db.prepare('UPDATE paper_wagers SET legs_json=?').run('[]'),/immutable/);assert.throws(()=>db.prepare('DELETE FROM paper_wagers').run(),/immutable/);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM paper_ledger').get() as {n:number}).n,1);
+  assert.deepEqual(ensurePaperStake(db as never),{rebuilt:false});
  }finally{db.close();}
 });

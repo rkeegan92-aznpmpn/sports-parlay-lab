@@ -51,11 +51,12 @@ export function validateLegs(legs: Candidate[]): string[] {
   if (Math.max(0, ...Object.values(g)) > MAX_LEGS_PER_GAME) errs.push(`More than ${MAX_LEGS_PER_GAME} legs from one game`);
   return errs;
 }
-export function eligible(kind: Kind, c: Candidate, now = Date.now()): boolean {
-  return eligibilityWarnings(kind, c, now).length === 0;
+export type Thresholds = { minLeg: number; minSample: number };
+export function eligible(kind: Kind, c: Candidate, now = Date.now(), thresholds?: Thresholds): boolean {
+  return eligibilityWarnings(kind, c, now, thresholds).length === 0;
 }
-export function eligibilityWarnings(kind: Kind, c: Candidate, now = Date.now()): string[] {
-  const s = c.scored, cfg = CONFIG[kind], warnings: string[] = [];
+export function eligibilityWarnings(kind: Kind, c: Candidate, now = Date.now(), thresholds?: Thresholds): string[] {
+  const s = c.scored, cfg = thresholds ?? CONFIG[kind], warnings: string[] = [];
   if (!s || !Number.isFinite(s.p) || s.p <= 0 || s.p >= 1) warnings.push('No valid probability estimate.');
   if (!Number.isFinite(c.odds) || Math.abs(c.odds) < 100) warnings.push('FanDuel American odds are invalid.');
   if (!SUPPORTED_MARKETS.includes(c.market)) warnings.push(`Unsupported FanDuel market key: ${c.market}.`);
@@ -147,11 +148,11 @@ export function warningsFor(legs: Candidate[], now = Date.now()): string[] {
   if (Object.values(g).some((n) => n > 1)) w.push('Same-game parlay pricing is especially dependent on correlation and is not estimated from an actual FanDuel quote.');
   return w;
 }
-export function makeTicket(legs: Candidate[], kind: Kind, o: { seed?: number; avoid?: Set<string>; now?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean } = {}): Ticket {
+export function makeTicket(legs: Candidate[], kind: Kind, o: { seed?: number; avoid?: Set<string>; now?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; thresholds?: Thresholds } = {}): Ticket {
   const errs = validateLegs(legs);
   if (errs.length) throw new Error(`Invalid ticket: ${errs.join('; ')}`);
   const now = o.now ?? Date.now();
-  const selectionErrors = legs.flatMap((leg) => eligibilityWarnings(kind, leg, now).map((warning) => `${leg.name}: ${warning}`));
+  const selectionErrors = legs.flatMap((leg) => eligibilityWarnings(kind, leg, now, o.thresholds).map((warning) => `${leg.name}: ${warning}`));
   if (selectionErrors.length) throw new Error(`Invalid ticket selections: ${selectionErrors.join('; ')}`);
   if (legs.some((leg) => leg.source === 'demo')) {
     throw new Error('Invalid ticket: demo or non-live picks do not have verifiable FanDuel quotes.');
@@ -208,7 +209,7 @@ export function matchupSupport(c: Candidate): number {
   return (c.side === 'Under' ? 1 - allowance : allowance) - 0.5;
 }
 
-export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: Set<string>; top?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; minDecimal?: number } = {}): BuildResult {
+export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: Set<string>; top?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; minDecimal?: number; thresholds?: Thresholds } = {}): BuildResult {
   const now = o.now ?? Date.now();
   const rank = (c: Candidate) => kind === 'best'
     ? 0.55 * c.scored!.p + 0.25 * Math.max(-1, Math.min(1, c.scored!.ev)) + 0.2 * Math.min(c.sample, 10) / 10 + 0.02 * matchupSupport(c)
@@ -216,7 +217,7 @@ export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: 
       0.75 * Math.min(Math.log(americanToDecimal(c.odds)), Math.log(10)) / Math.log(10) + 0.02 * matchupSupport(c);
   const counts: Record<Pos, number> = { QB: 0, RB: 0, WR: 0, TE: 0 };
   const best = new Map<string, Candidate>(); // one candidate per verified player so slots are not wasted
-  for (const c of pool.filter((x) => eligible(kind, x, now))) {
+  for (const c of pool.filter((x) => eligible(kind, x, now, o.thresholds))) {
     let k = playerIdentity(c), cur = best.get(k);
     if(!cur){const alias=[...best.entries()].find(([,old])=>samePlayer(c,old));if(alias)[k,cur]=alias;}
     if (!cur || rank(c) > rank(cur)) best.set(k, c);
@@ -255,7 +256,7 @@ export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: 
         0.04 * ov });
   }
   cand.sort((a, b) => b.q - a.q);
-  const evaluated = cand.slice(0, o.top ?? 50).map((c, i) => makeTicket(c.legs, kind, { seed: 100 + i, avoid: o.avoid, now, testMode: o.testMode, modelValidated: o.modelValidated, pregameResearch: o.pregameResearch }));
+  const evaluated = cand.slice(0, o.top ?? 50).map((c, i) => makeTicket(c.legs, kind, { seed: 100 + i, avoid: o.avoid, now, testMode: o.testMode, modelValidated: o.modelValidated, pregameResearch: o.pregameResearch, thresholds: o.thresholds }));
   const options = evaluated
     .filter((ticket) => ticket.evLower95 > 0)
     .sort((a, b) => b.score - a.score);
