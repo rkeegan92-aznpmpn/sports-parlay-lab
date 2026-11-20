@@ -1,0 +1,529 @@
+From 28c7b362b2880016379f7ff3551e25060088a241 Mon Sep 17 00:00:00 2001
+From: stage2 <a@b>
+Date: Thu, 19 Nov 2026 21:54:17 +0000
+Subject: [PATCH] Stage 2: preset generation, adjustable paper stake +
+ migration, sport columns, /api/sports
+
+---
+ nfl-parlay-lab/src/app/api/paper/route.ts     |  3 +-
+ nfl-parlay-lab/src/app/api/sports/route.ts    |  7 +++
+ .../app/components/PaperBettingWorkspace.tsx  |  5 +-
+ nfl-parlay-lab/src/lib/optimizer.ts           | 19 +++----
+ nfl-parlay-lab/src/lib/presetGeneration.ts    | 40 +++++++++++++++
+ nfl-parlay-lab/src/server/db.ts               |  4 +-
+ nfl-parlay-lab/src/server/multiProvider.ts    |  3 +-
+ nfl-parlay-lab/src/server/paper.ts            | 21 +++++---
+ nfl-parlay-lab/src/server/paperSchema.ts      | 27 ++++++++--
+ nfl-parlay-lab/src/server/pick6Batch.ts       |  2 +-
+ nfl-parlay-lab/tests/paper.test.ts            | 42 ++++++++++++++-
+ nfl-parlay-lab/tests/poolFixtures.ts          | 34 +++++++++++++
+ nfl-parlay-lab/tests/stage2-presets.test.ts   | 51 +++++++++++++++++++
+ 13 files changed, 230 insertions(+), 28 deletions(-)
+ create mode 100644 nfl-parlay-lab/src/app/api/sports/route.ts
+ create mode 100644 nfl-parlay-lab/src/lib/presetGeneration.ts
+ create mode 100644 nfl-parlay-lab/tests/poolFixtures.ts
+ create mode 100644 nfl-parlay-lab/tests/stage2-presets.test.ts
+
+diff --git a/nfl-parlay-lab/src/app/api/paper/route.ts b/nfl-parlay-lab/src/app/api/paper/route.ts
+index f7a8fef..32a0a20 100644
+--- a/nfl-parlay-lab/src/app/api/paper/route.ts
++++ b/nfl-parlay-lab/src/app/api/paper/route.ts
+@@ -1,7 +1,7 @@
+ import {NextResponse} from 'next/server';
+ import {getDb} from '@/server/db.ts';
+ import {cachedProviderFetch} from '@/server/load.ts';
+-import {paperGames,paperSelection,resolvePaperSelection,savePaperSelection,paperDashboard,paperSlates,paperWindow,paperConfig,updatePaperConfig,previewPaper,capturePaperSlate,gradePaperWagers,paperKeys,PaperError} from '@/server/paper.ts';
++import {paperGames,paperSelection,resolvePaperSelection,savePaperSelection,paperDashboard,paperSlates,paperWindow,paperConfig,updatePaperConfig,setPaperStake,previewPaper,capturePaperSlate,gradePaperWagers,paperKeys,PaperError} from '@/server/paper.ts';
+ import {PAPER_STRATEGIES,type PaperStrategy} from '@/lib/paper.ts';
+ const headers={'Cache-Control':'no-store'};
+ export const dynamic='force-dynamic';
+@@ -12,6 +12,7 @@ export async function POST(request:Request){try{
+  const text=await request.text();if(text.length>1500)return NextResponse.json({error:'Request too large.'},{status:413,headers});let body;try{body=JSON.parse(text);}catch{return NextResponse.json({error:'Invalid paper action JSON.'},{status:400,headers});}
+  if(!body||typeof body!=='object'||Array.isArray(body))throw new PaperError('Send a paper action object.');
+  const db=getDb(),f=cachedProviderFetch(db),now=Date.now();
++ if(body.action==='stake')return NextResponse.json({stakeCents:setPaperStake(db,body.stake,now)},{headers});
+  if(body.action==='settings')return NextResponse.json({config:updatePaperConfig(db,body.config,now)},{headers});
+  if(body.action==='selection')return NextResponse.json({selection:savePaperSelection(db,body.selection,await paperGames(f,now),Date.now())},{headers});
+  if(body.action==='grade')return NextResponse.json({grading:await gradePaperWagers(db,f,now),dashboard:paperDashboard(db,now)},{headers});
+diff --git a/nfl-parlay-lab/src/app/api/sports/route.ts b/nfl-parlay-lab/src/app/api/sports/route.ts
+new file mode 100644
+index 0000000..cc9d814
+--- /dev/null
++++ b/nfl-parlay-lab/src/app/api/sports/route.ts
+@@ -0,0 +1,7 @@
++import {NextResponse} from 'next/server';
++import {listSports} from '@/lib/sports/registry.ts';
++import {allRiskChoices} from '@/lib/riskPresets.ts';
++import {DEFAULT_PAPER_STAKE_CENTS,MIN_PAPER_STAKE_CENTS,MAX_PAPER_STAKE_CENTS} from '@/lib/stake.ts';
++export const dynamic='force-dynamic';
++/** Static capability listing. Makes no provider request and exposes no credentials. */
++export async function GET(){return NextResponse.json({sports:listSports(),riskChoices:allRiskChoices(),paperStake:{defaultCents:DEFAULT_PAPER_STAKE_CENTS,minCents:MIN_PAPER_STAKE_CENTS,maxCents:MAX_PAPER_STAKE_CENTS}},{headers:{'Cache-Control':'no-store'}});}
+diff --git a/nfl-parlay-lab/src/app/components/PaperBettingWorkspace.tsx b/nfl-parlay-lab/src/app/components/PaperBettingWorkspace.tsx
+index 8c6e07c..89c353b 100644
+--- a/nfl-parlay-lab/src/app/components/PaperBettingWorkspace.tsx
++++ b/nfl-parlay-lab/src/app/components/PaperBettingWorkspace.tsx
+@@ -14,7 +14,9 @@ export default function PaperBettingWorkspace(){
+  async function load(){try{const r=await fetch('/api/paper?'+new URLSearchParams({...historyStrategy!=='ALL'?{strategy:historyStrategy}:{},...historyBefore?{before:String(historyBefore)}:{}}),{cache:'no-store'}),b=await r.json();if(!r.ok)throw new Error(b.error);setData(b);setConfig(c=>c??b.config);setSelection(s=>s??b.selection);}catch(e){setError(e instanceof Error?e.message:'Paper dashboard unavailable.');}}
+  useEffect(()=>{void load();const timer=setInterval(()=>void load(),30000);return()=>clearInterval(timer);},[historyStrategy,historyBefore]);
+  async function action(action:string,strategy?:PaperStrategy,nextSelection?:PaperSelection){setBusy(true);setError('');setMessage('');try{const r=await fetch('/api/paper',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,selection:nextSelection??selection,strategy,...(action==='settings'?{config}:{})})}),b=await r.json();if(!r.ok)throw new Error(b.error??'Paper action failed.');if(b.preview)setPreview(b.preview);if(b.grading?.providerErrors?.length)setError('Final-data limitations: '+b.grading.providerErrors.join(' '));setMessage(action==='capture'?`${b.captured} paper wager(s) recorded. ${b.notes.join(' ')}`:action==='grade'?'Free final-stat grading checked. Missing or incomplete results stay Pending.':action==='settings'?'Automatic paper schedule saved.':action==='selection'?'Paper game selection saved for previews, capture and the automatic collector.':'Verified cached research preview generated; no paid provider refresh.');await load();}catch(e){setError(e instanceof Error?e.message:'Paper action failed.');if(action==='selection'){setSelection(null);await load();}}finally{setBusy(false);}}
+- async function generateCaptureAll(){setBusy(true);setError('');setMessage('');setPreview(null);setBatchReceipts([]);setProgress('Starting verified paper generation…');try{const batch=await runPick6Batch('paper',false,p=>setProgress(p.message));setPreview(batch.analysis);setMessage(batch.summary);setBatchReceipts(batch.records.map(r=>`${r.strategy}: ${r.created?'Captured $10 virtual wager':'Already captured; no new debit'} #${r.id} · ${new Date(r.capturedAt).toLocaleString()} · original odds retained.`));if(batch.missing.length)setError(`Unavailable strategies: ${batch.missing.join(', ')}. ${batch.notes.join(' ')}`);}catch(e){setError(e instanceof Error?e.message:'Paper capture failed. Check history before retrying.');}finally{await load();setBusy(false);setProgress('');}}
++ const [stakeInput,setStakeInput]=useState<string|null>(null);
++ async function saveStake(){setBusy(true);setError('');setMessage('');try{const r=await fetch('/api/paper',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'stake',stake:stakeInput??String((data?.stakeCents??1000)/100)})}),b=await r.json();if(!r.ok)throw new Error(b.error??'Stake not saved.');setMessage(`Paper stake is now $${(b.stakeCents/100).toFixed(2)} for new wagers; recorded wagers keep their original stake.`);setStakeInput(null);await load();}catch(e){setError(e instanceof Error?e.message:'Stake not saved.');}finally{setBusy(false);}}
++ async function generateCaptureAll(){setBusy(true);setError('');setMessage('');setPreview(null);setBatchReceipts([]);setProgress('Starting verified paper generation…');try{const batch=await runPick6Batch('paper',false,p=>setProgress(p.message));setPreview(batch.analysis);setMessage(batch.summary);setBatchReceipts(batch.records.map(r=>`${r.strategy}: ${r.created?'Captured virtual wager':'Already captured; no new debit'} #${r.id} · ${new Date(r.capturedAt).toLocaleString()} · original odds retained.`));if(batch.missing.length)setError(`Unavailable strategies: ${batch.missing.join(', ')}. ${batch.notes.join(' ')}`);}catch(e){setError(e instanceof Error?e.message:'Paper capture failed. Check history before retrying.');}finally{await load();setBusy(false);setProgress('');}}
+  function choose(next:PaperSelection){setSelection(next);setPreview(null);void action('selection',undefined,next);}
+  return <main aria-label="Paper Betting dashboard" className="mx-auto max-w-6xl space-y-4 p-4"><h1 className="text-2xl font-bold">NFL Paper Betting</h1><p>Virtual bankroll only · $1,000 starting funds · $10 per ticket · Safer, Balanced, Aggressive and Long Shot Pick 6. No real wager or payment is made.</p><p>Green: Win · Red: Loss · Yellow: Pending · Gray: Push/Void. Every result includes a text label.</p>
+  {error&&<p role="alert" className="text-red-300">{error}</p>}{message&&!busy&&<p role="status">{message}</p>}{busy&&<p role="status">{progress||'Checking paper records…'}</p>}{batchReceipts.map(r=><p key={r}>{r}</p>)}
+@@ -23,6 +25,7 @@ export default function PaperBettingWorkspace(){
+  <section aria-label="Virtual bankroll" className="grid gap-3 sm:grid-cols-3">{[['Available virtual cash',data.availableCents],['Outstanding stake',data.outstandingCents],['Bankroll (cash + open stakes at cost)',data.bankrollCents],['Realized estimated P/L',data.summary.profitCents]].map(([label,amount])=><article key={String(label)} className="rounded border border-line p-3"><b>{label}</b><p>{money(Number(amount))}</p></article>)}<article className="rounded border border-line p-3"><b>Realized estimated ROI</b><p>{percent(data.summary.roi)}</p></article><article className="rounded border border-line p-3"><b>Verified settled-leg accuracy</b><p>{percent(data.summary.legAccuracy)} ({data.summary.legWins} wins / {data.summary.legWins+data.summary.legLosses} graded decisions)</p></article></section>
+  {data.warnings.map(w=><p key={w} className="text-amber-200">{w}</p>)}
+  <section aria-label="Paper collection health" className="rounded border border-line p-3"><h2 className="font-bold">Automatic collection</h2><p>Collector {data.collector.status} · schedule {data.config.enabled?'enabled':'disabled'}. {data.collector.active?'Collector heartbeat is current.':'No active collector heartbeat: scheduled capture and grading are stopped.'}</p><p>Runs with the existing collector, approximately every 15 minutes while the Codespace is running. It uses provider caches only and never refreshes paid odds. Resume grades existing tickets without placing missed past wagers.</p><p>{data.collector.reason}</p>{data.collector.lastError&&<p className="text-amber-200">Last collector diagnostic: {data.collector.lastError}</p>}{data.collectorPhases.map(p=><p key={p.phase}>{p.phase}: {p.status} · {p.messages.join(' ')}</p>)}{data.paperPhase&&<p>Paper phase: {data.paperPhase.status} · {data.paperPhase.messages.join(' ')}</p>}{data.runs[0]&&<p>Latest paper capture check: {new Date(data.runs[0].created_at).toLocaleString()} · {data.runs[0].status} · {data.runs[0].captured} captured.</p>}</section>
++ <section aria-label="Paper bet size" className="space-y-3 rounded border border-line p-3"><h2 className="font-bold">Paper bet size</h2><label className="block">Stake per new paper wager (default $10)<input inputMode="decimal" aria-label="Paper stake in dollars" className="mt-1 block min-h-12 w-full rounded border border-line p-3" value={stakeInput??String((data.stakeCents??1000)/100)} onChange={e=>setStakeInput(e.target.value)}/></label><button disabled={busy} className="min-h-12 rounded border border-line p-3" onClick={()=>void saveStake()}>Save paper stake</button></section>
+  {config&&<section aria-label="Paper schedule settings" className="space-y-3 rounded border border-line p-3"><h2 className="font-bold">Weekly capture window (NFL Eastern game date)</h2><label className="block"><input type="checkbox" checked={config.enabled} onChange={e=>setConfig({...config,enabled:e.target.checked})}/> Enable automatic paper capture from eligible caches</label><div className="flex flex-wrap gap-3">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d,i)=><label key={d}><input type="checkbox" checked={config.days.includes(i)} onChange={e=>setConfig({...config,days:e.target.checked?[...config.days,i]:config.days.filter(x=>x!==i)})}/>{d}</label>)}</div><label className="block">Open minutes before first kickoff<input aria-label="Paper lead minutes" className="ml-2 w-24 bg-bg p-2" type="number" value={config.leadMinutes} onChange={e=>setConfig({...config,leadMinutes:Number(e.target.value)})}/></label><label className="block">Close minutes before first kickoff<input aria-label="Paper close minutes" className="ml-2 w-24 bg-bg p-2" type="number" value={config.closeMinutes} onChange={e=>setConfig({...config,closeMinutes:Number(e.target.value)})}/></label><p>The first verified kickoff anchors each date's window, including earlier games on resume. No automatic capture outside that window; no backdated entry. The saved game selection controls the collector and manual generator. One wager per selected game set/strategy; identical selections cannot be charged again through another scope. Multi-date tickets are attributed to the first kickoff's NFL week.</p><button disabled={busy} className="min-h-12 rounded border border-line p-3" onClick={()=>void action('settings')}>Save paper schedule</button></section>}
+  <section aria-label="Manual paper fallback" className="space-y-3 rounded border border-line p-3"><h2 className="font-bold">Game selection and paper capture</h2>{data.scheduleError&&<p role="alert">{data.scheduleError}</p>}<label>NFL slate<select aria-label="Paper NFL slate" className="block min-h-12 w-full bg-bg p-2" disabled={busy} value={selection?.mode??'ALL'} onChange={e=>choose({mode:e.target.value as PaperSelection['mode'],gameIds:e.target.value==='GAMES'?data.games.map(g=>g.id):[]})}><option value="ALL">All Upcoming Games</option><option value="SUNDAY">All Sunday Games</option><option value="GAMES" disabled={!data.games.length}>Select Multiple Games</option></select></label>{selection?.mode==='GAMES'&&<fieldset className="space-y-2"><legend>Select one or more verified upcoming games</legend>{data.games.map(g=><label className="flex min-h-12 items-center gap-2 rounded border border-line p-2" key={g.id}><input type="checkbox" aria-label={`Paper game ${g.label}`} disabled={busy} checked={selection.gameIds.includes(g.id)} onChange={e=>{const ids=e.target.checked?[...selection.gameIds,g.id]:selection.gameIds.filter(id=>id!==g.id);if(!ids.length){setError('Select at least one game.');return;}choose({mode:'GAMES',gameIds:ids});}}/>{g.label} · {new Date(g.commence_time).toLocaleString()}</label>)}</fieldset>}<p>{selection?.mode==='SUNDAY'?'Sunday is determined by the verified NFL Eastern game date.':selection?.mode==='GAMES'?`${selection.gameIds.length} games selected.`:'All verified upcoming NFL games across the available schedule.'} All four options reuse the working Pick 6 optimizer: 1 QB, 2 RB, 2 WR, 1 TE; maximum three picks per game. At least two games with eligible players are required.</p><div className="flex flex-wrap gap-3"><button disabled={busy||!data.games.length||!selection} className="min-h-12 rounded border border-line p-3" onClick={()=>void action('preview')}>Generate paper previews from cache</button><button disabled={busy||!data.games.length||!selection} className="min-h-12 rounded border border-neon p-3" onClick={()=>void action('capture')}>Capture all available $10 paper tickets</button><button disabled={busy} className="min-h-12 rounded border border-line p-3" onClick={()=>void action('grade')}>Grade paper tickets (free final stats)</button></div><p>Only current server-generated real-source FULL research is eligible. TEST MODE, demo, manual/unverified, historical/backtest and post-kickoff tickets cannot be wagered. Manual capture records the actual time, never a missed scheduled time.</p>{preview&&<div className="grid gap-3 md:grid-cols-2">{preview.options.map(s=><article key={s.label} className="rounded border border-line p-3"><h3>{s.label}</h3>{s.ticket?<><p>{s.ticket.legs.length} verified pregame legs · estimated product ×{s.ticket.decimal.toFixed(2)}. Full history and availability safeguards apply.</p>{s.ticket.legs.map(l=><p key={l.id}>{l.name} ({l.pos}, {l.team}) · {l.market} {l.side} {l.line} · {l.odds>0?'+':''}{l.odds} · {l.quoteEvidence?.provider} · quoted {new Date(l.oddsAt).toLocaleString()} · kickoff {new Date(l.kickoff).toLocaleString()}{Date.parse(l.kickoff)<=Date.now()||Date.now()-Date.parse(l.oddsAt)>1800000?' · Archived/stale — not actionable':''}</p>)}<button disabled={busy} className="min-h-12 rounded border border-line p-2" onClick={()=>void action('capture',s.label)}>Capture {s.label} $10 ticket</button></>:<p>{s.missing.join(' ')}</p>}</article>)}</div>}</section>
+  <section aria-label="Paper strategy performance"><h2 className="text-xl font-bold">Strategy performance — estimated paper results</h2><div className="grid gap-3 sm:grid-cols-2">{data.strategies.map(s=><article key={s.strategy} className="rounded border border-line p-3"><h3>{s.strategy}</h3><p>{s.wagers} wagers · {s.wins} wins · {s.losses} losses · {s.pending} pending · {s.pushes} pushes · {s.voids} voids</p><p>Realized P/L {money(s.profitCents)} · ROI {percent(s.roi)} · ticket hit rate {percent(s.ticketAccuracy)} · leg accuracy {percent(s.legAccuracy)}</p></article>)}</div></section>
+diff --git a/nfl-parlay-lab/src/lib/optimizer.ts b/nfl-parlay-lab/src/lib/optimizer.ts
+index ba8157f..8ac3376 100644
+--- a/nfl-parlay-lab/src/lib/optimizer.ts
++++ b/nfl-parlay-lab/src/lib/optimizer.ts
+@@ -51,11 +51,12 @@ export function validateLegs(legs: Candidate[]): string[] {
+   if (Math.max(0, ...Object.values(g)) > MAX_LEGS_PER_GAME) errs.push(`More than ${MAX_LEGS_PER_GAME} legs from one game`);
+   return errs;
+ }
+-export function eligible(kind: Kind, c: Candidate, now = Date.now()): boolean {
+-  return eligibilityWarnings(kind, c, now).length === 0;
++export type Thresholds = { minLeg: number; minSample: number };
++export function eligible(kind: Kind, c: Candidate, now = Date.now(), thresholds?: Thresholds): boolean {
++  return eligibilityWarnings(kind, c, now, thresholds).length === 0;
+ }
+-export function eligibilityWarnings(kind: Kind, c: Candidate, now = Date.now()): string[] {
+-  const s = c.scored, cfg = CONFIG[kind], warnings: string[] = [];
++export function eligibilityWarnings(kind: Kind, c: Candidate, now = Date.now(), thresholds?: Thresholds): string[] {
++  const s = c.scored, cfg = thresholds ?? CONFIG[kind], warnings: string[] = [];
+   if (!s || !Number.isFinite(s.p) || s.p <= 0 || s.p >= 1) warnings.push('No valid probability estimate.');
+   if (!Number.isFinite(c.odds) || Math.abs(c.odds) < 100) warnings.push('FanDuel American odds are invalid.');
+   if (!SUPPORTED_MARKETS.includes(c.market)) warnings.push(`Unsupported FanDuel market key: ${c.market}.`);
+@@ -147,11 +148,11 @@ export function warningsFor(legs: Candidate[], now = Date.now()): string[] {
+   if (Object.values(g).some((n) => n > 1)) w.push('Same-game parlay pricing is especially dependent on correlation and is not estimated from an actual FanDuel quote.');
+   return w;
+ }
+-export function makeTicket(legs: Candidate[], kind: Kind, o: { seed?: number; avoid?: Set<string>; now?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean } = {}): Ticket {
++export function makeTicket(legs: Candidate[], kind: Kind, o: { seed?: number; avoid?: Set<string>; now?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; thresholds?: Thresholds } = {}): Ticket {
+   const errs = validateLegs(legs);
+   if (errs.length) throw new Error(`Invalid ticket: ${errs.join('; ')}`);
+   const now = o.now ?? Date.now();
+-  const selectionErrors = legs.flatMap((leg) => eligibilityWarnings(kind, leg, now).map((warning) => `${leg.name}: ${warning}`));
++  const selectionErrors = legs.flatMap((leg) => eligibilityWarnings(kind, leg, now, o.thresholds).map((warning) => `${leg.name}: ${warning}`));
+   if (selectionErrors.length) throw new Error(`Invalid ticket selections: ${selectionErrors.join('; ')}`);
+   if (legs.some((leg) => leg.source === 'demo')) {
+     throw new Error('Invalid ticket: demo or non-live picks do not have verifiable FanDuel quotes.');
+@@ -208,7 +209,7 @@ export function matchupSupport(c: Candidate): number {
+   return (c.side === 'Under' ? 1 - allowance : allowance) - 0.5;
+ }
+ 
+-export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: Set<string>; top?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; minDecimal?: number } = {}): BuildResult {
++export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?: Set<string>; top?: number; testMode?: boolean; modelValidated?: boolean; pregameResearch?: boolean; minDecimal?: number; thresholds?: Thresholds } = {}): BuildResult {
+   const now = o.now ?? Date.now();
+   const rank = (c: Candidate) => kind === 'best'
+     ? 0.55 * c.scored!.p + 0.25 * Math.max(-1, Math.min(1, c.scored!.ev)) + 0.2 * Math.min(c.sample, 10) / 10 + 0.02 * matchupSupport(c)
+@@ -216,7 +217,7 @@ export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?:
+       0.75 * Math.min(Math.log(americanToDecimal(c.odds)), Math.log(10)) / Math.log(10) + 0.02 * matchupSupport(c);
+   const counts: Record<Pos, number> = { QB: 0, RB: 0, WR: 0, TE: 0 };
+   const best = new Map<string, Candidate>(); // one candidate per verified player so slots are not wasted
+-  for (const c of pool.filter((x) => eligible(kind, x, now))) {
++  for (const c of pool.filter((x) => eligible(kind, x, now, o.thresholds))) {
+     let k = playerIdentity(c), cur = best.get(k);
+     if(!cur){const alias=[...best.entries()].find(([,old])=>samePlayer(c,old));if(alias)[k,cur]=alias;}
+     if (!cur || rank(c) > rank(cur)) best.set(k, c);
+@@ -255,7 +256,7 @@ export function build(kind: Kind, pool: Candidate[], o: { now?: number; avoid?:
+         0.04 * ov });
+   }
+   cand.sort((a, b) => b.q - a.q);
+-  const evaluated = cand.slice(0, o.top ?? 50).map((c, i) => makeTicket(c.legs, kind, { seed: 100 + i, avoid: o.avoid, now, testMode: o.testMode, modelValidated: o.modelValidated, pregameResearch: o.pregameResearch }));
++  const evaluated = cand.slice(0, o.top ?? 50).map((c, i) => makeTicket(c.legs, kind, { seed: 100 + i, avoid: o.avoid, now, testMode: o.testMode, modelValidated: o.modelValidated, pregameResearch: o.pregameResearch, thresholds: o.thresholds }));
+   const options = evaluated
+     .filter((ticket) => ticket.evLower95 > 0)
+     .sort((a, b) => b.score - a.score);
+diff --git a/nfl-parlay-lab/src/lib/presetGeneration.ts b/nfl-parlay-lab/src/lib/presetGeneration.ts
+new file mode 100644
+index 0000000..95e1691
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/presetGeneration.ts
+@@ -0,0 +1,40 @@
++import type { Candidate, Ticket } from './types.ts';
++import { build } from './optimizer.ts';
++import { fourFullOptions, RISK_OPTIONS } from './fourOptions.ts';
++import { AGGRESSIVE_PRESETS, resolveRisk, type AggressivePreset, type RiskSelection } from './riskPresets.ts';
++import { resolveSport } from './sports/registry.ts';
++import type { SportId } from './sports/types.ts';
++
++export interface RiskSlot { risk: string; optional: boolean; ticket: Ticket | null; missing: string[]; ranking: string }
++export interface GenOptions { now?: number; testMode?: boolean }
++
++/** Loosest per-leg floor across all presets: candidate pools for presets must be filtered no tighter than this. */
++export const LOOSEST_PRESET_THRESHOLDS = {
++  minLeg: Math.min(...AGGRESSIVE_PRESETS.map((p) => p.minLegProbability)),
++  minSample: Math.min(...AGGRESSIVE_PRESETS.map((p) => p.minSample)),
++};
++
++/** One optional aggressive preset through the EXISTING six-leg optimizer (same slot, per-game, EV-lower-bound and validation rules); only the thresholds differ. */
++export function presetSlot(pool: Candidate[], preset: AggressivePreset, o: GenOptions = {}): RiskSlot {
++  const now = o.now ?? Date.now();
++  const r = build('aggr', pool, { now, pregameResearch: true, testMode: o.testMode, top: 60, minDecimal: preset.minTicketDecimal - 1e-9,
++    thresholds: { minLeg: preset.minLegProbability, minSample: preset.minSample } });
++  const best = [...r.options].sort((a, b) => b.decimal - a.decimal)[0] ?? null;
++  const ticket = best ? { ...best, warnings: [`${preset.label} preset: ${preset.warning}`, ...best.warnings] } : null;
++  return { risk: preset.label, optional: true, ticket, ranking: `Highest theoretical payout meeting the ${preset.label} floors (per-leg p ≥ ${preset.minLegProbability}, sample ≥ ${preset.minSample}, price ≥ ${preset.minTicketDecimal}x).`,
++    missing: ticket ? [] : [`No eligible six-pick ticket meets the ${preset.label} floors.`, ...r.missing.filter((m) => !/higher theoretical price than Best Six/.test(m))] };
++}
++export const presetSlots = (pool: Candidate[], o: GenOptions = {}): RiskSlot[] => AGGRESSIVE_PRESETS.map((p) => presetSlot(pool, p, o));
++export const standardSlots = (pool: Candidate[], o: GenOptions = {}): RiskSlot[] =>
++  fourFullOptions(pool, o.now ?? Date.now(), o.testMode ?? false).map((s) => ({ risk: s.label, optional: false, ticket: s.ticket, missing: s.missing, ranking: s.ranking }));
++
++/** Sport-aware entry point. Only implemented sports generate; others return an honest, explicit refusal (never fabricated picks). */
++export function generateForRisk(sportId: SportId, pool: Candidate[], risk: unknown, o: GenOptions = {}): { sport: SportId; slots: RiskSlot[]; error?: string } {
++  const sport = resolveSport(sportId);
++  if (sport.status !== 'implemented') return { sport: sport.id, slots: [], error: `${sport.label} ticket generation is not implemented yet: its odds markets and stats source are unverified.` };
++  if (risk == null || risk === 'all') return { sport: sport.id, slots: [...standardSlots(pool, o), ...presetSlots(pool, o)] };
++  const sel: RiskSelection | null = resolveRisk(risk);
++  if (!sel) return { sport: sport.id, slots: [], error: `Unknown risk option. Choose one of: ${[...RISK_OPTIONS, ...AGGRESSIVE_PRESETS.map((p) => p.label)].join(', ')}.` };
++  if (sel.kind === 'preset') return { sport: sport.id, slots: [presetSlot(pool, sel.preset, o)] };
++  return { sport: sport.id, slots: standardSlots(pool, o).filter((s) => s.risk === sel.level) };
++}
+diff --git a/nfl-parlay-lab/src/server/db.ts b/nfl-parlay-lab/src/server/db.ts
+index 625863b..b01cf48 100644
+--- a/nfl-parlay-lab/src/server/db.ts
++++ b/nfl-parlay-lab/src/server/db.ts
+@@ -1,4 +1,4 @@
+-import {PAPER_SCHEMA} from './paperSchema.ts';
++import {PAPER_SCHEMA,ensurePaperStake} from './paperSchema.ts';
+ import Database from 'better-sqlite3';
+ import fs from 'node:fs';
+ import path from 'node:path';
+@@ -72,6 +72,7 @@ export function getDb() {
+     const file = databaseFile();
+     fs.mkdirSync(path.dirname(file), { recursive: true });
+     db = new Database(file); db.pragma('journal_mode = WAL'); db.pragma('busy_timeout = 5000'); db.exec(SCHEMA);
++    ensurePaperStake(db as never);
+     const gradeColumns=db.pragma('table_info(saved_ticket_grades)') as {name:string}[];
+     if(!gradeColumns.some(c=>c.name==='finalized'))db.exec('ALTER TABLE saved_ticket_grades ADD COLUMN finalized INTEGER NOT NULL DEFAULT 0');
+     const collectorColumns = db.pragma('table_info(collector_state)') as {name:string}[];
+@@ -79,6 +80,7 @@ export function getDb() {
+     if (!collectorColumns.some(c=>c.name==='credential_fingerprint')) db.exec('ALTER TABLE collector_state ADD COLUMN credential_fingerprint TEXT');
+     if (!collectorColumns.some(c=>c.name==='process_id')) db.exec('ALTER TABLE collector_state ADD COLUMN process_id INTEGER');
+     const savedColumns = db.pragma('table_info(saved_tickets)') as { name: string }[];
++    if (!savedColumns.some((column) => column.name === 'sport')) db.exec("ALTER TABLE saved_tickets ADD COLUMN sport TEXT NOT NULL DEFAULT 'nfl'");
+     if (!savedColumns.some((column) => column.name === 'purpose')) {
+       db.exec("ALTER TABLE saved_tickets ADD COLUMN purpose TEXT NOT NULL DEFAULT 'legacy-research'");
+     }
+diff --git a/nfl-parlay-lab/src/server/multiProvider.ts b/nfl-parlay-lab/src/server/multiProvider.ts
+index 5e55b06..fac7ee2 100644
+--- a/nfl-parlay-lab/src/server/multiProvider.ts
++++ b/nfl-parlay-lab/src/server/multiProvider.ts
+@@ -21,6 +21,7 @@ import {firstQuarterRejectionReasons} from '../lib/firstQuarter.ts';
+ import type {Candidate,FirstQuarterCandidate} from '../lib/types.ts';
+ import {conservativeContracts,type ProviderId,type Period,type NormalizedQuote} from '../lib/normalizedOdds.ts';
+ import {fourFullOptions,fourQuarterOptions} from '../lib/fourOptions.ts';
++import {presetSlots,LOOSEST_PRESET_THRESHOLDS} from '../lib/presetGeneration.ts';
+ type Db=Database.Database;
+ type Games=Awaited<ReturnType<typeof freeSchedule>>;
+ export type ProviderKeys=Record<'fanduelapi'|'odds-api',string>&{propline?:string};
+@@ -126,7 +127,7 @@ export async function multiResearch(db:Db,keys:ProviderKeys,period:Period,game='
+  const propLineCache=propLineEvidence(db,keys.propline??'',period,game,now),propLineQuotes=quotes.filter(q=>q.provider==='propline'),propLineQuarter=quarter.filter(x=>x.quote.provider==='propline');
+  const propLinePlayerAnalysis=results[2].status==='fulfilled'&&'playerDiagnostics'in results[2].value?results[2].value.playerDiagnostics:null;
+  const propLineDiagnostics={...propLineCache,playerAnalysis:propLinePlayerAnalysis,pipeline:{selectedSidePrices:propLineQuotes.length,freshProviderSidePrices:propLineQuotes.filter(q=>q.status==='current-provider-snapshot').length,availabilityVerifiedCandidates:period==='Q1'?propLineQuarter.length:full.filter(x=>x.quote.provider==='propline').length,eligibleBestSidePrices:period==='Q1'?propLineQuarter.filter(x=>!firstQuarterRejectionReasons(x.candidate,false,now).length).length:full.filter(x=>x.quote.provider==='propline'&&!eligibilityWarnings('best',x.candidate,now).length).length,eligibleAggressiveSidePrices:period==='Q1'?propLineQuarter.filter(x=>!firstQuarterRejectionReasons(x.candidate,true,now).length).length:full.filter(x=>x.quote.provider==='propline'&&!eligibilityWarnings('aggr',x.candidate,now).length).length},eligibilityRejections:eligibility.filter(e=>propLineQuotes.some(q=>q.id===e.quoteId)&&e.reasons.length)};
+- return {propLineDiagnostics,mode:period,selectedGame:game,scope:'All verified upcoming games or the selected matchup; no Sunday-only implicit filter.',games:games.map(g=>({id:g.id,label:g.label,kickoff:g.commence_time})),sources,providerStatus:multiProviderStatus(db,keys,now),quotes,eligibility,conflicts:[...mergedFull.conflicts,...mergedQ.conflicts],options:period==='FULL'?fourFullOptions(mergedFull.eligible.map(x=>x.candidate),now,testMode):fourQuarterOptions(mergedQ.eligible.map(x=>x.candidate),now),warnings:['RESEARCH ONLY — probabilities are uncalibrated; EV and combined prices are theoretical, not validated recommendations.','Provider data is independently sourced; direct FanDuel acceptance and same-game pricing are unverified.','No automatic provider refresh or fallback. Missing markets and lines are never invented.'],generatedAt:now};
++ return {propLineDiagnostics,mode:period,selectedGame:game,scope:'All verified upcoming games or the selected matchup; no Sunday-only implicit filter.',games:games.map(g=>({id:g.id,label:g.label,kickoff:g.commence_time})),sources,providerStatus:multiProviderStatus(db,keys,now),quotes,eligibility,conflicts:[...mergedFull.conflicts,...mergedQ.conflicts],presetOptions:period==='FULL'?presetSlots(conservativeContracts(full.filter(x=>!eligibilityWarnings('aggr',x.candidate,now,LOOSEST_PRESET_THRESHOLDS).length)).eligible.map(x=>x.candidate),{now,testMode}):[],options:period==='FULL'?fourFullOptions(mergedFull.eligible.map(x=>x.candidate),now,testMode):fourQuarterOptions(mergedQ.eligible.map(x=>x.candidate),now),warnings:['RESEARCH ONLY — probabilities are uncalibrated; EV and combined prices are theoretical, not validated recommendations.','Provider data is independently sourced; direct FanDuel acceptance and same-game pricing are unverified.','No automatic provider refresh or fallback. Missing markets and lines are never invented.'],generatedAt:now};
+ }
+ export async function refreshSelectedProvider(db:Db,keys:ProviderKeys,provider:ProviderId,period:Period,game:string,f:typeof fetch=fetch,now=Date.now()){
+  if(provider==='propline')return refreshPropLine(db,keys.propline??'',period,game,f,f,now);
+diff --git a/nfl-parlay-lab/src/server/paper.ts b/nfl-parlay-lab/src/server/paper.ts
+index 5fd0b97..ff27ac8 100644
+--- a/nfl-parlay-lab/src/server/paper.ts
++++ b/nfl-parlay-lab/src/server/paper.ts
+@@ -5,6 +5,8 @@ import {contractHit,contractPush} from '../lib/propMarkets.ts';
+ import {americanToDecimal} from '../lib/odds.ts';
+ import {eligibilityWarnings,validateLegs} from '../lib/optimizer.ts';
+ import type {Ticket,Candidate} from '../lib/types.ts';
++import {ensurePaperStake} from './paperSchema.ts';
++import {effectiveStakeCents,parseStake} from '../lib/stake.ts';
+ import {PAPER_STAKE_CENTS,PAPER_START_CENTS,PAPER_STRATEGIES,type PaperStrategy,type PaperOutcome} from '../lib/paper.ts';
+ import {RISK_OPTIONS,type ResearchSlot} from '../lib/fourOptions.ts';
+ import {nflDate} from '../lib/sundayWindow.ts';
+@@ -22,6 +24,9 @@ export type PaperGame=Awaited<ReturnType<typeof freeSchedule>>[number];
+ type Wager={id:number;slate_key:string;season:number;week:number;nfl_date:string;strategy:PaperStrategy;created_at:number;capture_mode:'automatic'|'manual';stake_cents:number;theoretical_decimal:number;legs_json:string;ticket_json:string};
+ export class PaperError extends Error{}
+ export const paperKeys=():ProviderKeys=>({fanduelapi:process.env.FANDUEL_API_KEY?.trim()??'','odds-api':process.env.ODDS_API_KEY?.trim()??'',propline:process.env.PROPLINE_API_KEY?.trim()??''});
++export function paperStakeCents(db:Db):number{ensurePaperStake(db as never);const r=db.prepare('SELECT stake_cents FROM paper_settings WHERE id=1').get() as {stake_cents:number}|undefined;return effectiveStakeCents(r?.stake_cents);}
++/** Changes the stake for FUTURE paper wagers only; recorded wagers are immutable and keep their original stake. */
++export function setPaperStake(db:Db,input:unknown,now=Date.now()):number{const p=parseStake(input);if(!p.ok)throw new PaperError(p.error);ensurePaperStake(db as never);db.prepare('UPDATE paper_settings SET stake_cents=?,updated_at=? WHERE id=1').run(p.cents,now);return p.cents;}
+ export function paperConfig(db:Db):PaperConfig{const r=db.prepare('SELECT * FROM paper_settings WHERE id=1').get() as {enabled:number;lead_minutes:number;close_minutes:number;days_json:string};return {enabled:!!r.enabled,leadMinutes:r.lead_minutes,closeMinutes:r.close_minutes,days:JSON.parse(r.days_json)};}
+ export function updatePaperConfig(db:Db,input:unknown,now=Date.now()){
+  const c=input as PaperConfig;if(!c||typeof c.enabled!=='boolean'||!Number.isInteger(c.leadMinutes)||c.leadMinutes<15||c.leadMinutes>1440||!Number.isInteger(c.closeMinutes)||c.closeMinutes<5||c.closeMinutes>120||c.closeMinutes>=c.leadMinutes||!Array.isArray(c.days)||!c.days.length||c.days.length>7||c.days.some(d=>!Number.isInteger(d)||d<0||d>6))throw new PaperError('Choose capture weekdays, 15–1440 minutes lead and 5–120 minutes close; lead must exceed close.');
+@@ -80,16 +85,16 @@ export function capturePaperTicket(db:Db,slate:PaperSlate,strategy:PaperStrategy
+   const signature=fullSignature(ticket),previous=db.prepare('SELECT id,ticket_json FROM paper_wagers WHERE strategy=?').all(strategy) as {id:number;ticket_json:string}[];
+   const duplicate=previous.find(w=>fullSignature(JSON.parse(w.ticket_json))===signature);if(duplicate)return {id:duplicate.id,created:false};
+   if(mode==='automatic'&&!paperWindow(slate,paperConfig(db),now).due)throw new PaperError('Automatic capture window is closed; no retroactive wager.');
+-  assertCurrentPick6(ticket,slate,now);if(sumCash(db)<PAPER_STAKE_CENTS)throw new PaperError('Insufficient available virtual funds; no wager recorded.');
+-  const inserted=db.prepare('INSERT INTO paper_wagers(slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(slate.key,slate.season,slate.week,slate.date,strategy,now,mode,PAPER_STAKE_CENTS,ticket.decimal,JSON.stringify(ticket.legs),JSON.stringify(ticket));const id=Number(inserted.lastInsertRowid);
+-  db.prepare('INSERT INTO paper_ledger(event_key,wager_id,created_at,kind,amount_cents,note) VALUES(?,?,?,?,?,?)').run(`stake:${id}`,id,now,'stake',-PAPER_STAKE_CENTS,'$10 simulated wager; estimated combined payout, no sportsbook bet.');
++  assertCurrentPick6(ticket,slate,now);const stake=paperStakeCents(db);if(sumCash(db)<stake)throw new PaperError('Insufficient available virtual funds; no wager recorded.');
++  const inserted=db.prepare('INSERT INTO paper_wagers(slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(slate.key,slate.season,slate.week,slate.date,strategy,now,mode,stake,ticket.decimal,JSON.stringify(ticket.legs),JSON.stringify(ticket));const id=Number(inserted.lastInsertRowid);
++  db.prepare('INSERT INTO paper_ledger(event_key,wager_id,created_at,kind,amount_cents,note) VALUES(?,?,?,?,?,?)').run(`stake:${id}`,id,now,'stake',-stake,`$${stake%100?(stake/100).toFixed(2):stake/100} simulated wager; estimated combined payout, no sportsbook bet.`);
+   db.prepare('INSERT INTO paper_settlements(wager_id,status) VALUES(?,?)').run(id,'pending');
+   db.prepare('INSERT INTO paper_ticket_grades(ticket_id,status,legs_json,checked_at,finalized) VALUES(?,?,?,?,0)').run(id,'pending',JSON.stringify(ticket.legs.map(l=>({player:l.name,pos:l.pos,market:l.market,side:l.side,line:l.line,status:'pending',hit:null,actual:null,reason:'awaiting-final-result'}))),now);
+   return {id,created:true};
+  }).immediate();
+ }
+ function proven(leg:LegGrade){return leg.rulesVersion==='research-fullgame-v1'&&['nflverse','espn'].includes(leg.resultSource??'')&&!!leg.resultGameId&&!!leg.resultDate&&(leg.status==='void'?leg.reason==='explicit-final-boxscore-did-not-play':typeof leg.actual==='number'&&Number.isFinite(leg.actual));}
+-export function paperReturn(legs:Candidate[],grades:LegGrade[]):{status:PaperOutcome;returnCents:number;finalized:boolean}{
++export function paperReturn(legs:Candidate[],grades:LegGrade[],stakeCents:number=PAPER_STAKE_CENTS):{status:PaperOutcome;returnCents:number;finalized:boolean}{
+  if(legs.length!==6||grades.length!==6)return {status:'pending',returnCents:0,finalized:false};
+  const valid=grades.every((g,i)=>g.player===legs[i].name&&g.market===legs[i].market&&g.side===legs[i].side&&g.line===legs[i].line&&['settled','push','void','pending'].includes(g.status)&&(g.status==='pending'||proven(g))&&(g.status!=='settled'||(g.hit===0||g.hit===1)&&!contractPush(g.actual!,legs[i].side,legs[i].line)&&Number(contractHit(g.actual!,legs[i].side,legs[i].line))===g.hit)&&(g.status!=='push'||contractPush(g.actual!,legs[i].side,legs[i].line)));
+  if(!valid)return {status:'pending',returnCents:0,finalized:false};
+@@ -97,8 +102,8 @@ export function paperReturn(legs:Candidate[],grades:LegGrade[]):{status:PaperOut
+  if(grades.some(g=>g.status==='settled'&&g.hit===0))return {status:'loss',returnCents:0,finalized:done};
+  if(!done)return {status:'pending',returnCents:0,finalized:false};
+  const active=legs.filter((_,i)=>grades[i].status==='settled');
+- if(!active.length)return {status:grades.every(g=>g.status==='push')?'push':'void',returnCents:PAPER_STAKE_CENTS,finalized:true};
+- const amount=Math.round(PAPER_STAKE_CENTS*active.reduce((v,l)=>v*americanToDecimal(l.odds),1));
++ if(!active.length)return {status:grades.every(g=>g.status==='push')?'push':'void',returnCents:stakeCents,finalized:true};
++ const amount=Math.round(stakeCents*active.reduce((v,l)=>v*americanToDecimal(l.odds),1));
+  if(!Number.isSafeInteger(amount))return {status:'pending',returnCents:0,finalized:false};
+  return {status:active.length<6?'push-adjusted-win':'win',returnCents:amount,finalized:true};
+ }
+@@ -108,7 +113,7 @@ export function reconcilePaperLedger(db:Db,now=Date.now()){
+  for(const w of wagers){
+   db.transaction(()=>{
+    const latest=db.prepare('SELECT legs_json FROM paper_ticket_grades WHERE ticket_id=?').get(w.id) as {legs_json:string}|undefined;
+-   let outcome:ReturnType<typeof paperReturn>;try{outcome=paperReturn(JSON.parse(w.legs_json),JSON.parse(latest?.legs_json??'[]'));}catch{return;}
++   let outcome:ReturnType<typeof paperReturn>;try{outcome=paperReturn(JSON.parse(w.legs_json),JSON.parse(latest?.legs_json??'[]'),w.stake_cents);}catch{return;}
+    const previous=db.prepare('SELECT * FROM paper_settlements WHERE wager_id=?').get(w.id) as {status:PaperOutcome;return_cents:number;revision:number}|undefined;
+    if(previous?.status===outcome.status&&previous.return_cents===outcome.returnCents){db.prepare('UPDATE paper_settlements SET checked_at=? WHERE wager_id=?').run(now,w.id);return;}
+    const revision=(previous?.revision??0)+1,delta=outcome.returnCents-(previous?.return_cents??0);
+@@ -148,5 +153,5 @@ export function paperDashboard(db:Db,now=Date.now(),history:{before?:number;stra
+  const metrics=(group:typeof rows)=>{const closed=group.filter(r=>r.status!=='pending'),stake=closed.reduce((n,r)=>n+r.stake_cents,0),profit=closed.reduce((n,r)=>n+r.return_cents-r.stake_cents,0);let legWins=0,legLosses=0,legPushes=0,legVoids=0,legPending=0;for(const w of group)for(const l of grades[w.id]?.legs??[]){if(l.status==='settled'&&proven(l)&&l.hit===1)legWins++;else if(l.status==='settled'&&proven(l)&&l.hit===0)legLosses++;else if(l.status==='push'&&proven(l))legPushes++;else if(l.status==='void'&&proven(l))legVoids++;else legPending++;}const wins=group.filter(r=>r.status==='win'||r.status==='push-adjusted-win').length,losses=group.filter(r=>r.status==='loss').length;return {ticketAccuracy:wins+losses?wins/(wins+losses):null,wagers:group.length,pending:group.length-closed.length,wins:group.filter(r=>r.status==='win'||r.status==='push-adjusted-win').length,losses:group.filter(r=>r.status==='loss').length,pushes:group.filter(r=>r.status==='push').length,voids:group.filter(r=>r.status==='void').length,settledStakeCents:stake,profitCents:profit,roi:stake?profit/stake:null,legWins,legLosses,legPushes,legVoids,legPending,legAccuracy:legWins+legLosses?legWins/(legWins+legLosses):null};};
+  const by=(key:(w:typeof rows[number])=>string)=>[...new Set(rows.map(key))].sort().map(k=>({key:k,...metrics(rows.filter(w=>key(w)===k))}));
+  const historyRows=rows.filter(w=>(history.before===undefined||w.id<history.before)&&(!history.strategy||w.strategy===history.strategy)),page=historyRows.slice(0,100);
+- return {selection:paperSelection(db),collectorPhases:phaseHealth(db),historyHasMore:historyRows.length>100,historyNextBefore:historyRows.length>100?page.at(-1)!.id:null,historyStrategy:history.strategy??'ALL',paperPhase:phaseHealth(db).find(p=>p.phase==='paper-betting')??null,startingCents:PAPER_START_CENTS,stakeCents:PAPER_STAKE_CENTS,availableCents,outstandingCents,bankrollCents:availableCents+outstandingCents,config:paperConfig(db),collector:collectorStatus(db,now),summary:metrics(rows),weekly:by(w=>`${w.season} week ${w.week}`),seasons:by(w=>String(w.season)),strategies:PAPER_STRATEGIES.map(strategy=>({strategy,...metrics(rows.filter(w=>w.strategy===strategy))})),wagers:page.map(w=>({...w,legs:JSON.parse(w.legs_json) as Candidate[],grades:grades[w.id]??null,profitCents:w.status==='pending'?null:w.return_cents-w.stake_cents})),ledger:db.prepare('SELECT * FROM paper_ledger ORDER BY id DESC LIMIT 200').all(),runs:db.prepare('SELECT * FROM paper_runs ORDER BY id DESC LIMIT 30').all() as {id:number;created_at:number;slate_key:string|null;mode:string;status:string;captured:number;notes_json:string}[],warnings:['PAPER BETTING — virtual funds only. No wager is placed. No TEST MODE, demo, manual/unverified or backtest quotes enter the ledger.','All combined returns and ROI are ESTIMATED from individual leg prices; sportsbook same-game acceptance, correlation pricing and push/void repricing are unverified.','Scheduled capture and grading require the app/collector and Codespace to remain running. Resume catches up verified grading, never retroactive wagers. Corrections append reversals and can reduce available funds.']};
++ return {stakeCents:paperStakeCents(db),selection:paperSelection(db),collectorPhases:phaseHealth(db),historyHasMore:historyRows.length>100,historyNextBefore:historyRows.length>100?page.at(-1)!.id:null,historyStrategy:history.strategy??'ALL',paperPhase:phaseHealth(db).find(p=>p.phase==='paper-betting')??null,startingCents:PAPER_START_CENTS,stakeCents:PAPER_STAKE_CENTS,availableCents,outstandingCents,bankrollCents:availableCents+outstandingCents,config:paperConfig(db),collector:collectorStatus(db,now),summary:metrics(rows),weekly:by(w=>`${w.season} week ${w.week}`),seasons:by(w=>String(w.season)),strategies:PAPER_STRATEGIES.map(strategy=>({strategy,...metrics(rows.filter(w=>w.strategy===strategy))})),wagers:page.map(w=>({...w,legs:JSON.parse(w.legs_json) as Candidate[],grades:grades[w.id]??null,profitCents:w.status==='pending'?null:w.return_cents-w.stake_cents})),ledger:db.prepare('SELECT * FROM paper_ledger ORDER BY id DESC LIMIT 200').all(),runs:db.prepare('SELECT * FROM paper_runs ORDER BY id DESC LIMIT 30').all() as {id:number;created_at:number;slate_key:string|null;mode:string;status:string;captured:number;notes_json:string}[],warnings:['PAPER BETTING — virtual funds only. No wager is placed. No TEST MODE, demo, manual/unverified or backtest quotes enter the ledger.','All combined returns and ROI are ESTIMATED from individual leg prices; sportsbook same-game acceptance, correlation pricing and push/void repricing are unverified.','Scheduled capture and grading require the app/collector and Codespace to remain running. Resume catches up verified grading, never retroactive wagers. Corrections append reversals and can reduce available funds.']};
+ }
+diff --git a/nfl-parlay-lab/src/server/paperSchema.ts b/nfl-parlay-lab/src/server/paperSchema.ts
+index a415976..204e306 100644
+--- a/nfl-parlay-lab/src/server/paperSchema.ts
++++ b/nfl-parlay-lab/src/server/paperSchema.ts
+@@ -3,7 +3,8 @@ export const PAPER_SCHEMA=`
+ CREATE TABLE IF NOT EXISTS paper_settings (
+  id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 1,
+  lead_minutes INTEGER NOT NULL DEFAULT 120, close_minutes INTEGER NOT NULL DEFAULT 15,
+- days_json TEXT NOT NULL DEFAULT '[0,1,4,6]', updated_at INTEGER NOT NULL DEFAULT 0
++ days_json TEXT NOT NULL DEFAULT '[0,1,4,6]', updated_at INTEGER NOT NULL DEFAULT 0,
++ stake_cents INTEGER NOT NULL DEFAULT 1000
+ );
+ INSERT OR IGNORE INTO paper_settings(id) VALUES(1);
+ CREATE TABLE IF NOT EXISTS paper_selection (
+@@ -13,10 +14,10 @@ CREATE TABLE IF NOT EXISTS paper_selection (
+ INSERT OR IGNORE INTO paper_selection(id,mode) VALUES(1,'ALL');
+ CREATE TABLE IF NOT EXISTS paper_wagers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, slate_key TEXT NOT NULL, season INTEGER NOT NULL, week INTEGER NOT NULL, nfl_date TEXT NOT NULL,
+- strategy TEXT NOT NULL CHECK(strategy IN ('Safer','Balanced','Aggressive','Long Shot')),
++ strategy TEXT NOT NULL CHECK(strategy IN ('Safer','Balanced','Aggressive','Long Shot','Aggressive+','High Roller','Moonshot')),
+  created_at INTEGER NOT NULL, capture_mode TEXT NOT NULL CHECK(capture_mode IN ('automatic','manual')),
+- stake_cents INTEGER NOT NULL CHECK(stake_cents=1000), theoretical_decimal REAL NOT NULL,
+- legs_json TEXT NOT NULL, ticket_json TEXT NOT NULL, UNIQUE(slate_key,strategy)
++ stake_cents INTEGER NOT NULL CHECK(stake_cents BETWEEN 100 AND 100000), theoretical_decimal REAL NOT NULL,
++ legs_json TEXT NOT NULL, ticket_json TEXT NOT NULL, sport TEXT NOT NULL DEFAULT 'nfl', UNIQUE(slate_key,strategy)
+ );
+ CREATE TABLE IF NOT EXISTS paper_ticket_grades (ticket_id INTEGER PRIMARY KEY,status TEXT NOT NULL,legs_json TEXT NOT NULL,checked_at INTEGER NOT NULL,finalized INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS paper_grade_events (id INTEGER PRIMARY KEY AUTOINCREMENT,ticket_id INTEGER NOT NULL,checked_at INTEGER NOT NULL,previous_json TEXT,result_json TEXT NOT NULL);
+@@ -33,3 +34,21 @@ CREATE TRIGGER IF NOT EXISTS paper_wagers_no_delete BEFORE DELETE ON paper_wager
+ CREATE TRIGGER IF NOT EXISTS paper_ledger_no_update BEFORE UPDATE ON paper_ledger BEGIN SELECT RAISE(ABORT,'Paper ledger is append-only'); END;
+ CREATE TRIGGER IF NOT EXISTS paper_ledger_no_delete BEFORE DELETE ON paper_ledger BEGIN SELECT RAISE(ABORT,'Paper ledger is append-only'); END;
+ `;
++
++type MigrationDb={exec(sql:string):unknown;prepare(sql:string):{get():unknown;run(...a:unknown[]):unknown};pragma(s:string):unknown;transaction<T>(fn:()=>T):()=>T};
++const WAGER_COLUMNS='id,slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json';
++/** Idempotent, data-preserving migration: adds the adjustable-stake setting and relaxes the legacy stake_cents=1000 CHECK. Existing wagers keep their ids and exact values; immutability triggers are recreated. */
++export function ensurePaperStake(db:MigrationDb):{rebuilt:boolean}{
++ const cols=db.pragma('table_info(paper_settings)') as {name:string}[];
++ if(cols.length&&!cols.some(c=>c.name==='stake_cents'))db.exec('ALTER TABLE paper_settings ADD COLUMN stake_cents INTEGER NOT NULL DEFAULT 1000');
++ const row=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='paper_wagers'").get() as {sql:string}|undefined;
++ if(!row||!/stake_cents\s*=\s*1000/.test(row.sql))return {rebuilt:false};
++ db.transaction(()=>{
++  const ddl=(PAPER_SCHEMA.match(/CREATE TABLE IF NOT EXISTS paper_wagers \([\s\S]*?\n\);/)as RegExpMatchArray)[0].replace('IF NOT EXISTS paper_wagers','paper_wagers_v2');
++  db.exec(ddl);
++  db.exec(`INSERT INTO paper_wagers_v2(${WAGER_COLUMNS}) SELECT ${WAGER_COLUMNS} FROM paper_wagers ORDER BY id`);
++  db.exec('DROP TABLE paper_wagers');db.exec('ALTER TABLE paper_wagers_v2 RENAME TO paper_wagers');
++  db.exec(PAPER_SCHEMA); // recreates immutability triggers; every other statement is idempotent
++ })();
++ return {rebuilt:true};
++}
+diff --git a/nfl-parlay-lab/src/server/pick6Batch.ts b/nfl-parlay-lab/src/server/pick6Batch.ts
+index 7a6b579..ef69888 100644
+--- a/nfl-parlay-lab/src/server/pick6Batch.ts
++++ b/nfl-parlay-lab/src/server/pick6Batch.ts
+@@ -41,7 +41,7 @@ export async function pick6Batch(db:Db,keys:ProviderKeys,target:BatchTarget,test
+  // Both buttons analyze the same PropLine cache. Other workspaces retain multi-provider analysis.
+  const analysis=await multiResearch(db,{fanduelapi:'','odds-api':'',propline:keys.propline??''},'FULL','ALL',f,clock(),testMode,new Set(slate.gameIds));
+  const options=analysis.options as ResearchSlot<Ticket>[],records:BatchRecord[]=[],notes:string[]=[];
+- progress({stage:'save',message:target==='paper'?'Capturing eligible $10 virtual tickets atomically, with duplicate-wager checks…':'Saving eligible research tickets and pending grades, with duplicate-save checks…'});
++ progress({stage:'save',message:target==='paper'?'Capturing eligible virtual tickets atomically, with duplicate-wager checks…':'Saving eligible research tickets and pending grades, with duplicate-save checks…'});
+  if(target==='paper'){
+   const captured=await capturePaperSlate(db,slate,keys,f,clock(),'manual',undefined,async()=>({options}));notes.push(...captured.notes);
+   for(const slot of options){const rows=db.prepare('SELECT id,created_at,slate_key,ticket_json FROM paper_wagers WHERE strategy=? ORDER BY id').all(slot.label) as {id:number;created_at:number;slate_key:string;ticket_json:string}[];
+diff --git a/nfl-parlay-lab/tests/paper.test.ts b/nfl-parlay-lab/tests/paper.test.ts
+index a5f30f5..3820097 100644
+--- a/nfl-parlay-lab/tests/paper.test.ts
++++ b/nfl-parlay-lab/tests/paper.test.ts
+@@ -2,8 +2,8 @@ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import Database from 'better-sqlite3';
+ import {SCHEMA} from '../src/server/db.ts';
+-import {PAPER_SCHEMA} from '../src/server/paperSchema.ts';
+-import {paperSelection,savePaperSelection,resolvePaperSelection,paperGames,capturePaperTicket,capturePaperSlate,paperDashboard,paperConfig,updatePaperConfig,paperWindow,paperSlates,previewPaper,gradePaperWagers,reconcilePaperLedger,paperReturn,type PaperSlate} from '../src/server/paper.ts';
++import {PAPER_SCHEMA,ensurePaperStake} from '../src/server/paperSchema.ts';
++import {paperSelection,savePaperSelection,resolvePaperSelection,paperGames,capturePaperTicket,capturePaperSlate,paperDashboard,paperConfig,updatePaperConfig,paperWindow,paperSlates,previewPaper,gradePaperWagers,reconcilePaperLedger,paperReturn,setPaperStake,paperStakeCents,type PaperSlate} from '../src/server/paper.ts';
+ import {refreshPropLine} from '../src/server/propline.ts';
+ import {paperColor,paperLabel,PAPER_STRATEGIES} from '../src/lib/paper.ts';
+ import type {LegGrade} from '../src/server/savedGrades.ts';
+@@ -126,3 +126,41 @@ test('multi-date scope reuses working four-option optimizer, retains max three/g
+   const other=new Database(':memory:');other.exec(SCHEMA);try{assert.equal(capturePaperTicket(other,multi,'Safer',t,'manual',NOW).created,true);const invalid=structuredClone(t);invalid.legs[0].kickoff=new Date(Date.parse(invalid.legs[0].kickoff)+60000).toISOString();invalid.legs[0].quoteEvidence!.kickoff=invalid.legs[0].kickoff;invalid.legs[0].verification!.event.kickoff=invalid.legs[0].kickoff;assert.throws(()=>capturePaperTicket(other,multi,'Balanced',invalid,'manual',NOW),/mismatched/);}finally{other.close();}
+  }finally{db.close();}
+ });
++
++test('paper stake defaults to $10, is adjustable for future wagers only, and drives debit, ledger note and payout',async()=>{
++ const {db,ticket}=await setup(true);try{
++  assert.equal(paperStakeCents(db),1000);
++  assert.equal(setPaperStake(db,'25'),2500);assert.equal(paperStakeCents(db),2500);
++  for(const bad of ['0','0.5','1000.01','abc',''])assert.throws(()=>setPaperStake(db,bad),/stake|\$|amount/i,bad);
++  assert.equal(paperStakeCents(db),2500);
++  const placed=capturePaperTicket(db,slate,'Safer',ticket,'manual',NOW);
++  const w=db.prepare('SELECT stake_cents FROM paper_wagers WHERE id=?').get(placed.id) as {stake_cents:number};assert.equal(w.stake_cents,2500);
++  assert.equal(paperDashboard(db).availableCents,97500);
++  assert.match((db.prepare("SELECT note FROM paper_ledger WHERE kind='stake'").get() as {note:string}).note,/^\$25 simulated wager/);
++  setPaperStake(db,'50');assert.equal((db.prepare('SELECT stake_cents FROM paper_wagers WHERE id=?').get(placed.id) as {stake_cents:number}).stake_cents,2500,'recorded wager keeps its stake');
++  putGrades(db,placed.id,grades(ticket.legs));const payout=Math.round(ticket.decimal*2500);const d=paperDashboard(db);assert.equal(d.availableCents,97500+payout);assert.equal(d.summary.profitCents,payout-2500);
++  assert.equal(paperReturn(ticket.legs,grades(ticket.legs),2500).returnCents,payout);
++  assert.equal(paperReturn(ticket.legs,grades(ticket.legs)).returnCents,Math.round(ticket.decimal*1000),'default stake argument stays $10');
++ }finally{db.close();}
++});
++test('legacy $10-only paper_wagers table is rebuilt in place: rows preserved, immutability kept, stake now flexible, idempotent',()=>{
++ const legacy=PAPER_SCHEMA.replace('CHECK(stake_cents BETWEEN 100 AND 100000)','CHECK(stake_cents=1000)').replace(",'Aggressive+','High Roller','Moonshot'",'').replace(",\n stake_cents INTEGER NOT NULL DEFAULT 1000",'').replace(", sport TEXT NOT NULL DEFAULT 'nfl'",'');
++ assert.ok(legacy.includes('stake_cents=1000')&&!legacy.includes('Moonshot'));
++ const db=new Database(':memory:');try{
++  db.exec(legacy);
++  const ins=db.prepare('INSERT INTO paper_wagers(slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
++  ins.run('2026:9:2026-11-08',2026,9,'2026-11-08','Safer',1,'manual',1000,12.5,'[]','{}');ins.run('2026:9:2026-11-08',2026,9,'2026-11-08','Balanced',2,'manual',1000,40.25,'[]','{}');
++  assert.throws(()=>ins.run('s',2026,9,'d','Safer',3,'manual',2500,2,'[]','{}'),/CHECK/);
++  const before=db.prepare('SELECT * FROM paper_wagers ORDER BY id').all();
++  assert.deepEqual(ensurePaperStake(db as never),{rebuilt:true});
++  const after=db.prepare('SELECT id,slate_key,season,week,nfl_date,strategy,created_at,capture_mode,stake_cents,theoretical_decimal,legs_json,ticket_json FROM paper_wagers ORDER BY id').all();
++  assert.deepEqual(after,before);
++  assert.equal((db.prepare('SELECT sport FROM paper_wagers WHERE id=1').get() as {sport:string}).sport,'nfl');
++  assert.equal((db.prepare('SELECT stake_cents FROM paper_settings WHERE id=1').get() as {stake_cents:number}).stake_cents,1000);
++  ins.run('2026:9:2026-11-15',2026,10,'2026-11-15','Aggressive+',3,'manual',2500,2,'[]','{}');
++  assert.throws(()=>ins.run('x',2026,9,'d','Safer',4,'manual',99,2,'[]','{}'),/CHECK/);
++  assert.throws(()=>db.prepare('UPDATE paper_wagers SET legs_json=?').run('[]'),/immutable/);assert.throws(()=>db.prepare('DELETE FROM paper_wagers').run(),/immutable/);
++  assert.equal((db.prepare('SELECT COUNT(*) n FROM paper_ledger').get() as {n:number}).n,1);
++  assert.deepEqual(ensurePaperStake(db as never),{rebuilt:false});
++ }finally{db.close();}
++});
+diff --git a/nfl-parlay-lab/tests/poolFixtures.ts b/nfl-parlay-lab/tests/poolFixtures.ts
+new file mode 100644
+index 0000000..733ecfe
+--- /dev/null
++++ b/nfl-parlay-lab/tests/poolFixtures.ts
+@@ -0,0 +1,34 @@
++import { scoreCandidate } from '../src/lib/model.ts';
++import { demoResult } from '../src/lib/service.ts';
++
++export const NOW = Date.parse('2026-11-08T12:00:00Z');
++const demo = () => demoResult(NOW).candidates;
++const pick = (ids: string[]) => ids.map((i) => demo().find((c) => c.id === i)!);
++export const verifiedLivePool = () => demo().map((candidate) => {
++  const gameResults = Array.from({ length: 10 }, (_, index) => ({
++    date: new Date(NOW - (index + 1) * 864e5).toISOString(),
++    season: 2026, week: index + 1, team: candidate.team, opponent: candidate.opp, value: candidate.mean,
++    gameId: `${candidate.id}-history-${index}`, playerId: `gsis-${candidate.id}`,
++  }));
++  const history = {
++    last5: null,
++    last10: { games: 10, average: candidate.mean, median: candidate.mean, consistency: null, hits: 8, hitRate: 0.8, hitGames: 10, results: gameResults },
++    trend: null, homeAverage: null, awayAverage: null, opportunityAverage: 10,
++    roleGames: 5, snapAverage: null, snapCounts: null, defense: null, playingTime: 'unavailable' as const,
++  };
++  const live = {
++    ...candidate, source: 'live' as const, history, sample: 10,
++    historySource: 'nflverse' as const, historyPlayerId: `gsis-${candidate.id}`,
++    eventLabel: `${candidate.team} @ ${candidate.opp}`,
++    rosterVerified: true, rosterStatus: 'Active', roleSupported: true, roleGames: 5,
++    eventVerified: true, quoteVerified: true, historyVerified: true,
++    marketP: 0.5, marketPSource: 'no-vig' as const,
++    oddsAt: new Date(NOW).toISOString(), kickoff: new Date(NOW + 3600_000).toISOString(),
++    verification: {
++      event: { id: candidate.gameId, kickoff: new Date(NOW + 3600_000).toISOString(), label: `${candidate.team} @ ${candidate.opp}` },
++      quote: { bookmaker: 'fanduel' as const, player: candidate.name, market: candidate.market, side: candidate.side, line: candidate.line, odds: candidate.odds, updatedAt: new Date(NOW).toISOString() },
++      history: { source: 'nflverse' as const, playerId: `gsis-${candidate.id}`, market: candidate.market, line: candidate.line, gameIds: gameResults.map((result) => result.gameId) },
++    },
++  };
++  return { ...live, scored: scoreCandidate(live, NOW) };
++});
+diff --git a/nfl-parlay-lab/tests/stage2-presets.test.ts b/nfl-parlay-lab/tests/stage2-presets.test.ts
+new file mode 100644
+index 0000000..5be3fb6
+--- /dev/null
++++ b/nfl-parlay-lab/tests/stage2-presets.test.ts
+@@ -0,0 +1,51 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { NOW, verifiedLivePool } from './poolFixtures.ts';
++import { build, eligibilityWarnings, CONFIG } from '../src/lib/optimizer.ts';
++import { AGGRESSIVE_PRESETS } from '../src/lib/riskPresets.ts';
++import { presetSlot, presetSlots, standardSlots, generateForRisk, LOOSEST_PRESET_THRESHOLDS } from '../src/lib/presetGeneration.ts';
++
++/** Same verified fixture, repriced consistently (leg odds AND the verified quote record) at a given per-leg probability. */
++const repriced = (p: number, odds: number) => verifiedLivePool().map((c) => ({ ...c, odds, scored: { ...c.scored!, p, ev: p * (1 + odds / 100) - 1 },
++  verification: { ...c.verification!, quote: { ...c.verification!.quote, odds } } }));
++
++test('default eligibility is unchanged; a threshold override relaxes only the probability/sample floor', () => {
++  const low = repriced(0.25, 400)[0];
++  assert.ok(eligibilityWarnings('aggr', low, NOW).length > 0, 'existing Aggressive floor (0.30) still rejects p=0.25');
++  assert.equal(eligibilityWarnings('aggr', low, NOW, { minLeg: 0.2, minSample: 6 }).length, 0);
++  assert.deepEqual(CONFIG.aggr, { minLeg: 0.3, minSample: 6, label: 'Aggressive Six' });
++});
++test('existing four options are identical with and without the preset code path', () => {
++  const pool = verifiedLivePool();
++  const std = standardSlots(pool, { now: NOW });
++  assert.deepEqual(std.map((s) => s.risk), ['Safer', 'Balanced', 'Aggressive', 'Long Shot']);
++  assert.ok(std.every((s) => !s.optional));
++  assert.equal(build('aggr', pool, { now: NOW, pregameResearch: true }).options.length > 0, true);
++});
++test('presets produce valid six-leg tickets only where the standard Aggressive floor would reject every leg', () => {
++  const pool = repriced(0.28, 400);
++  assert.ok(standardSlots(pool, { now: NOW }).every((s) => s.ticket === null), 'p=0.28 < 0.30: standard options cannot build');
++  const slots = presetSlots(pool, { now: NOW });
++  const aggPlus = slots.find((s) => s.risk === 'Aggressive+')!;
++  assert.ok(aggPlus.ticket, aggPlus.missing.join(';'));
++  assert.equal(aggPlus.ticket!.legs.length, 6);
++  assert.ok(aggPlus.ticket!.decimal >= 20);
++  assert.ok(aggPlus.ticket!.warnings[0].startsWith('Aggressive+ preset'));
++  assert.ok(aggPlus.optional);
++});
++test('a preset below its own probability floor yields no ticket and an honest reason', () => {
++  const pool = repriced(0.12, 900); // below even Moonshot (0.15)
++  for (const s of presetSlots(pool, { now: NOW })) { assert.equal(s.ticket, null); assert.ok(s.missing.length > 0); }
++});
++test('loosest preset thresholds match the preset table', () => {
++  assert.equal(LOOSEST_PRESET_THRESHOLDS.minLeg, Math.min(...AGGRESSIVE_PRESETS.map((p) => p.minLegProbability)));
++});
++test('generateForRisk: sport-aware, explicit about unimplemented sports and unknown risks', () => {
++  const pool = verifiedLivePool();
++  for (const sport of ['nba', 'mlb', 'nhl', 'mma'] as const) { const r = generateForRisk(sport, pool, 'Safer', { now: NOW }); assert.equal(r.slots.length, 0); assert.match(r.error!, /not implemented/); }
++  assert.equal(generateForRisk('nfl', pool, 'Safer', { now: NOW }).slots.length, 1);
++  assert.equal(generateForRisk('nfl', pool, 'moonshot', { now: NOW }).slots[0].risk, 'Moonshot');
++  assert.equal(generateForRisk('nfl', pool, undefined, { now: NOW }).slots.length, 7);
++  assert.match(generateForRisk('nfl', pool, 'yolo', { now: NOW }).error!, /Unknown risk option/);
++  assert.equal(presetSlot(pool, AGGRESSIVE_PRESETS[0], { now: NOW }).risk, 'Aggressive+');
++});
+-- 
+2.43.0
+
