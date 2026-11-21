@@ -1,0 +1,37 @@
+name: Sports Lab Claude background agent
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 9 * * 1-5'
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+concurrency:
+  group: sports-agent
+  cancel-in-progress: false
+jobs:
+  claude:
+    if: github.repository == 'rkeegan92-aznpmpn/sports-parlay-lab'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Claude implementation cycle
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the primary implementation agent for Sports Parlay Lab.
+            Work ONLY in this repository. Preserve existing NFL functionality.
+            First inspect the repo and find any existing multi-sport implementation.
+            If absent, implement a small, testable foundation for NBA, MLB and MMA
+            without inventing odds or asserting unsupported live provider coverage.
+            Prioritize one incremental change per run. Run tests/typecheck/build.
+            Open a pull request for changes; never merge or deploy. If blocked,
+            explain exactly what is missing in the run summary.
+            Do not modify GitHub workflow files, credentials, or billing settings.
+          claude_args: '--max-turns 20'
