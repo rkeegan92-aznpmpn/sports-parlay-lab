@@ -1,3 +1,4 @@
+import Link from 'next/link';
 'use client';
 import PaperBettingWorkspace from './components/PaperBettingWorkspace';
 import MultiProviderWorkspace from './components/MultiProviderWorkspace';
@@ -59,7 +60,7 @@ const saveRequestError = (error: unknown, fallback: string) => {
 
 export default function Home() {
  const [workspace,setWorkspace]=useState<'free'|'live'|'paper'>('free');
- return <><nav className="flex flex-wrap gap-3 p-3"><button className="rounded border border-line p-3" onClick={()=>setWorkspace('free')}>Free data + manual odds</button><button className="rounded border border-line p-3" onClick={()=>setWorkspace('live')}>Live API workspace (requires credits)</button><button className="rounded border border-line p-3" onClick={()=>setWorkspace('paper')}>Paper Betting</button></nav>{workspace==='paper'?<PaperBettingWorkspace/>:<><MultiProviderWorkspace/><MarketExplorer/><FirstQuarterWorkspace/>{workspace==='free'?<><FanDuelWorkspace/><FreeWorkspace/></>:<LiveHome/>}<EvaluationDashboard/></>}</>;
+ return <><nav className="flex flex-wrap gap-3 p-3"><Link className="rounded border border-line p-3" href="/sports">Sports: NFL / NBA / MLB / MMA</Link><button className="rounded border border-line p-3" onClick={()=>setWorkspace('free')}>Free data + manual odds</button><button className="rounded border border-line p-3" onClick={()=>setWorkspace('live')}>Live API workspace (requires credits)</button><button className="rounded border border-line p-3" onClick={()=>setWorkspace('paper')}>Paper Betting</button></nav>{workspace==='paper'?<PaperBettingWorkspace/>:<><MultiProviderWorkspace/><MarketExplorer/><FirstQuarterWorkspace/>{workspace==='free'?<><FanDuelWorkspace/><FreeWorkspace/></>:<LiveHome/>}<EvaluationDashboard/></>}</>;
 }
 function LiveHome() {
   const [data, setData] = useState<Data | null>(null);
