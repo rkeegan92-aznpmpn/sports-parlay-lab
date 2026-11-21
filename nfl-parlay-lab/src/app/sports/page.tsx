@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { MARKET_CATALOG, type SportId } from '@/lib/sports/catalog';
 import { useState } from 'react';
 
-type Sport = 'NFL' | 'NBA' | 'MLB' | 'MMA';
+type Sport = SportId;
 const sports: { id: Sport; title: string; detail: string }[] = [
   { id: 'NFL', title: 'Football', detail: 'Existing NFL workspace is available.' },
   { id: 'NBA', title: 'Basketball', detail: 'NBA markets and providers are not connected yet.' },
@@ -32,6 +33,8 @@ export default function SportsHome() {
       <section aria-live="polite" className="rounded-lg border p-5 space-y-3">
         <h2 className="text-xl font-semibold">{current.id} — {current.title}</h2>
         <p>{current.detail}</p>
+        <h3 className="font-semibold">Planned markets (not connected to live odds)</h3>
+        <ul className="list-disc pl-5">{MARKET_CATALOG[selected].map((market) => <li key={market.key}>{market.label}</li>)}</ul>
         {selected === 'NFL' ? (
           <Link href="/" className="inline-block rounded bg-blue-700 px-4 py-2 text-white">Open NFL Parlay Lab</Link>
         ) : (
