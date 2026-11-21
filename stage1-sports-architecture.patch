@@ -1,0 +1,310 @@
+From 136a1773c73fa6554fbcd780875852f591980fc9 Mon Sep 17 00:00:00 2001
+From: stage1 <a@b>
+Date: Thu, 19 Nov 2026 02:59:02 +0000
+Subject: [PATCH] Stage 1: sports registry, risk presets, adjustable stake
+
+---
+ nfl-parlay-lab/src/lib/riskPresets.ts        | 34 ++++++++++++++
+ nfl-parlay-lab/src/lib/sports/nfl.ts         | 16 +++++++
+ nfl-parlay-lab/src/lib/sports/planned.ts     | 21 +++++++++
+ nfl-parlay-lab/src/lib/sports/registry.ts    | 11 +++++
+ nfl-parlay-lab/src/lib/sports/types.ts       | 28 ++++++++++++
+ nfl-parlay-lab/src/lib/stake.ts              | 18 ++++++++
+ nfl-parlay-lab/tests/risk-presets.test.ts    | 29 ++++++++++++
+ nfl-parlay-lab/tests/sports-registry.test.ts | 47 ++++++++++++++++++++
+ nfl-parlay-lab/tests/stake.test.ts           | 23 ++++++++++
+ 9 files changed, 227 insertions(+)
+ create mode 100644 nfl-parlay-lab/src/lib/riskPresets.ts
+ create mode 100644 nfl-parlay-lab/src/lib/sports/nfl.ts
+ create mode 100644 nfl-parlay-lab/src/lib/sports/planned.ts
+ create mode 100644 nfl-parlay-lab/src/lib/sports/registry.ts
+ create mode 100644 nfl-parlay-lab/src/lib/sports/types.ts
+ create mode 100644 nfl-parlay-lab/src/lib/stake.ts
+ create mode 100644 nfl-parlay-lab/tests/risk-presets.test.ts
+ create mode 100644 nfl-parlay-lab/tests/sports-registry.test.ts
+ create mode 100644 nfl-parlay-lab/tests/stake.test.ts
+
+diff --git a/nfl-parlay-lab/src/lib/riskPresets.ts b/nfl-parlay-lab/src/lib/riskPresets.ts
+new file mode 100644
+index 0000000..29e536a
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/riskPresets.ts
+@@ -0,0 +1,34 @@
++import { RISK_OPTIONS, type RiskOption } from './fourOptions.ts';
++import { CONFIG } from './optimizer.ts';
++
++/** The four existing levels are unchanged and remain the default. */
++export const STANDARD_RISK_LEVELS = RISK_OPTIONS;
++export type AggressivePresetId = 'aggressive-plus' | 'high-roller' | 'moonshot';
++export interface AggressivePreset {
++  id: AggressivePresetId; label: string; description: string;
++  /** Minimum per-leg estimated probability. Always below the existing Aggressive floor. */
++  minLegProbability: number;
++  minSample: number;
++  /** Minimum theoretical ticket decimal price. */
++  minTicketDecimal: number;
++  warning: string;
++}
++/** OPTIONAL presets. Numbers are proposed defaults, not backtested; wiring into the optimizer is a later stage. */
++export const AGGRESSIVE_PRESETS: readonly AggressivePreset[] = [
++  { id: 'aggressive-plus', label: 'Aggressive+', description: 'Looser per-leg floor than Aggressive for higher payouts.', minLegProbability: 0.25, minSample: 6, minTicketDecimal: 20, warning: 'Higher loss risk than Aggressive. Unvalidated.' },
++  { id: 'high-roller', label: 'High Roller', description: 'Much longer odds; most tickets will lose.', minLegProbability: 0.2, minSample: 6, minTicketDecimal: 50, warning: 'Most tickets will lose. Unvalidated.' },
++  { id: 'moonshot', label: 'Moonshot', description: 'Maximum aggression with a larger sample requirement to limit pure noise.', minLegProbability: 0.15, minSample: 8, minTicketDecimal: 100, warning: 'Extreme long shot; expect near-constant losses. Unvalidated.' },
++];
++export type RiskSelection = { kind: 'standard'; level: RiskOption } | { kind: 'preset'; preset: AggressivePreset };
++export const DEFAULT_RISK_SELECTION: RiskSelection = { kind: 'standard', level: 'Balanced' };
++/** Resolves a user-supplied id/label. Unknown values return null (callers must not silently substitute). */
++export function resolveRisk(input: unknown): RiskSelection | null {
++  if (typeof input !== 'string') return null;
++  const key = input.trim().toLowerCase();
++  const level = RISK_OPTIONS.find((l) => l.toLowerCase() === key);
++  if (level) return { kind: 'standard', level };
++  const preset = AGGRESSIVE_PRESETS.find((p) => p.id === key || p.label.toLowerCase() === key);
++  return preset ? { kind: 'preset', preset } : null;
++}
++export const allRiskChoices = () => [...RISK_OPTIONS.map((l) => ({ id: l, label: l, optional: false })), ...AGGRESSIVE_PRESETS.map((p) => ({ id: p.id, label: p.label, optional: true }))];
++export const existingAggressiveFloor = () => CONFIG.aggr.minLeg;
+diff --git a/nfl-parlay-lab/src/lib/sports/nfl.ts b/nfl-parlay-lab/src/lib/sports/nfl.ts
+new file mode 100644
+index 0000000..5524b3e
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/sports/nfl.ts
+@@ -0,0 +1,16 @@
++import type { SportModule, MarketCategory } from './types.ts';
++import { SLOTS, MAX_LEGS_PER_GAME } from '../optimizer.ts';
++import { PROP_STATS } from '../propMarkets.ts';
++
++/** Descriptor over the EXISTING NFL code: values are read from the live constants, not copied, so they cannot drift. */
++const markets: MarketCategory[] = [
++  ...Object.entries(PROP_STATS).map(([id, d]) => ({ id: d.market, label: id.replace(/_/g, ' '), scope: 'player' as const, coverage: 'verified-in-app' as const })),
++  { id: 'player_anytime_td', label: 'anytime touchdown', scope: 'player', coverage: 'verified-in-app' },
++];
++export const nfl: SportModule = {
++  id: 'nfl', label: 'NFL', status: 'implemented', participantNoun: 'player',
++  providerSportKey: 'football_nfl',
++  ticketRules: { legs: 6, maxLegsPerGame: MAX_LEGS_PER_GAME, slots: { ...SLOTS }, provisional: false },
++  markets,
++  notes: ['Wraps the existing optimizer, PropLine adapter, paper ledger and grading unchanged.'],
++};
+diff --git a/nfl-parlay-lab/src/lib/sports/planned.ts b/nfl-parlay-lab/src/lib/sports/planned.ts
+new file mode 100644
+index 0000000..ae4f20b
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/sports/planned.ts
+@@ -0,0 +1,21 @@
++import type { SportModule, MarketCategory } from './types.ts';
++const u = (id: string, label: string, scope: MarketCategory['scope']): MarketCategory => ({ id, label, scope, coverage: 'unverified' });
++const note = 'Descriptor only (Stage 1). Provider sport key, market keys and stats source are UNVERIFIED and must be confirmed against real provider responses before any pipeline is built; none are guessed here.';
++const generic = { legs: 6, maxLegsPerGame: 3, slots: null, provisional: true } as const;
++
++export const nba: SportModule = { id: 'nba', label: 'NBA', status: 'planned', participantNoun: 'player', providerSportKey: null,
++  ticketRules: { ...generic }, notes: [note],
++  markets: [u('points', 'points', 'player'), u('rebounds', 'rebounds', 'player'), u('assists', 'assists', 'player'), u('threes', 'three-pointers made', 'player')] };
++export const mlb: SportModule = { id: 'mlb', label: 'MLB', status: 'planned', participantNoun: 'player', providerSportKey: null,
++  ticketRules: { ...generic }, notes: [note],
++  markets: [u('hits', 'hits', 'player'), u('total_bases', 'total bases', 'player'), u('strikeouts', 'pitcher strikeouts', 'player'), u('home_runs', 'home runs', 'player')] };
++export const nhl: SportModule = { id: 'nhl', label: 'NHL', status: 'planned', participantNoun: 'player', providerSportKey: null,
++  ticketRules: { ...generic }, notes: [note],
++  markets: [u('points', 'points', 'player'), u('shots_on_goal', 'shots on goal', 'player'), u('goals', 'anytime goal', 'player'), u('saves', 'goalie saves', 'player')] };
++/** MMA/UFC: only markets with actual provider odds may ever be offered; every category stays 'unverified' until proven. */
++export const mma: SportModule = { id: 'mma', label: 'MMA/UFC', status: 'planned', participantNoun: 'fighter', providerSportKey: null,
++  ticketRules: { legs: 6, maxLegsPerGame: 1, slots: null, provisional: true },
++  notes: [note, 'A fight card is the event; at most one leg per fight by default because same-fight legs are strongly correlated.'],
++  markets: [u('fight_winner', 'fight winner', 'fight'), u('round_total', 'round total (over/under)', 'fight'), u('method_of_victory', 'method of victory', 'fight'),
++    u('ko_tko', 'win by KO/TKO', 'fight'), u('submission', 'win by submission', 'fight'), u('decision', 'win by decision', 'fight'),
++    u('fighter_significant_strikes', 'fighter significant strikes', 'fighter'), u('fighter_takedowns', 'fighter takedowns', 'fighter')] };
+diff --git a/nfl-parlay-lab/src/lib/sports/registry.ts b/nfl-parlay-lab/src/lib/sports/registry.ts
+new file mode 100644
+index 0000000..14d2db9
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/sports/registry.ts
+@@ -0,0 +1,11 @@
++import { SPORT_IDS, type SportId, type SportModule } from './types.ts';
++import { nfl } from './nfl.ts';
++import { nba, mlb, nhl, mma } from './planned.ts';
++const MODULES: Record<SportId, SportModule> = { nfl, nba, mlb, nhl, mma };
++export const DEFAULT_SPORT: SportId = 'nfl';
++export const isSportId = (v: unknown): v is SportId => typeof v === 'string' && (SPORT_IDS as readonly string[]).includes(v);
++export const getSport = (id: SportId): SportModule => MODULES[id];
++export const listSports = (): SportModule[] => SPORT_IDS.map((id) => MODULES[id]);
++export const implementedSports = (): SportModule[] => listSports().filter((s) => s.status === 'implemented');
++/** Unknown or missing input falls back to NFL so existing links/clients keep working. */
++export const resolveSport = (v: unknown): SportModule => (isSportId(v) ? MODULES[v] : MODULES[DEFAULT_SPORT]);
+diff --git a/nfl-parlay-lab/src/lib/sports/types.ts b/nfl-parlay-lab/src/lib/sports/types.ts
+new file mode 100644
+index 0000000..06b3411
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/sports/types.ts
+@@ -0,0 +1,28 @@
++/** Shared multi-sport contracts (Stage 1). Pure types/data: no network, no database, no secrets. */
++export const SPORT_IDS = ['nfl', 'nba', 'mlb', 'nhl', 'mma'] as const;
++export type SportId = (typeof SPORT_IDS)[number];
++/** 'implemented' = working end to end in this app today. 'planned' = descriptor only; no data pipeline yet. */
++export type ModuleStatus = 'implemented' | 'planned';
++/** 'verified-in-app' = the existing app already parses real odds for it. 'unverified' = must be confirmed against a real provider response before use. */
++export type CoverageStatus = 'verified-in-app' | 'unverified';
++export type MarketScope = 'player' | 'fighter' | 'fight' | 'game';
++export interface MarketCategory { id: string; label: string; scope: MarketScope; coverage: CoverageStatus }
++export interface TicketRules {
++  legs: number;
++  maxLegsPerGame: number;
++  /** Positional slot counts (e.g. NFL 1 QB/2 RB/2 WR/1 TE). null = no positional constraint. */
++  slots: Record<string, number> | null;
++  /** True when the value is a proposed default, not behavior carried over from verified NFL code. */
++  provisional: boolean;
++}
++export interface SportModule {
++  id: SportId;
++  label: string;
++  status: ModuleStatus;
++  participantNoun: 'player' | 'fighter';
++  /** Odds-provider sport key. null until confirmed against the real provider (never guessed). */
++  providerSportKey: string | null;
++  ticketRules: TicketRules;
++  markets: MarketCategory[];
++  notes: string[];
++}
+diff --git a/nfl-parlay-lab/src/lib/stake.ts b/nfl-parlay-lab/src/lib/stake.ts
+new file mode 100644
+index 0000000..15c36c9
+--- /dev/null
++++ b/nfl-parlay-lab/src/lib/stake.ts
+@@ -0,0 +1,18 @@
++import { PAPER_STAKE_CENTS } from './paper.ts';
++/** Paper-bet stake is adjustable; $10 is the default. Cents are always integers. */
++export const DEFAULT_PAPER_STAKE_CENTS = PAPER_STAKE_CENTS;
++export const MIN_PAPER_STAKE_CENTS = 100;     // $1.00
++export const MAX_PAPER_STAKE_CENTS = 100000;  // $1,000.00 (the starting virtual bankroll)
++export type StakeResult = { ok: true; cents: number } | { ok: false; error: string };
++export function parseStake(input: unknown): StakeResult {
++  const raw = typeof input === 'number' ? String(input) : typeof input === 'string' ? input.trim().replace(/^\$/, '') : '';
++  const m = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(raw);
++  if (!m) return { ok: false, error: 'Enter a dollar amount with at most two decimals, e.g. 10 or 12.50.' };
++  const cents = Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0') || 0);
++  if (cents < MIN_PAPER_STAKE_CENTS) return { ok: false, error: 'Minimum paper stake is $1.00.' };
++  if (cents > MAX_PAPER_STAKE_CENTS) return { ok: false, error: 'Maximum paper stake is $1,000.00.' };
++  return { ok: true, cents };
++}
++/** Stored/unset value -> effective stake; invalid or missing values fall back to $10. */
++export const effectiveStakeCents = (stored: unknown): number =>
++  typeof stored === 'number' && Number.isSafeInteger(stored) && stored >= MIN_PAPER_STAKE_CENTS && stored <= MAX_PAPER_STAKE_CENTS ? stored : DEFAULT_PAPER_STAKE_CENTS;
+diff --git a/nfl-parlay-lab/tests/risk-presets.test.ts b/nfl-parlay-lab/tests/risk-presets.test.ts
+new file mode 100644
+index 0000000..192e11e
+--- /dev/null
++++ b/nfl-parlay-lab/tests/risk-presets.test.ts
+@@ -0,0 +1,29 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { RISK_OPTIONS } from '../src/lib/fourOptions.ts';
++import { STANDARD_RISK_LEVELS, AGGRESSIVE_PRESETS, resolveRisk, allRiskChoices, existingAggressiveFloor, DEFAULT_RISK_SELECTION } from '../src/lib/riskPresets.ts';
++
++test('the four existing risk levels are preserved, unchanged and in order', () => {
++  assert.deepEqual([...STANDARD_RISK_LEVELS], ['Safer', 'Balanced', 'Aggressive', 'Long Shot']);
++  assert.equal(STANDARD_RISK_LEVELS, RISK_OPTIONS);
++  assert.deepEqual(DEFAULT_RISK_SELECTION, { kind: 'standard', level: 'Balanced' });
++});
++test('every optional preset is strictly more aggressive than the existing Aggressive floor and monotonic', () => {
++  const floor = existingAggressiveFloor();
++  let prev = floor;
++  for (const p of AGGRESSIVE_PRESETS) { assert.ok(p.minLegProbability < prev, p.id); prev = p.minLegProbability; assert.ok(p.minTicketDecimal >= 20); assert.ok(p.warning.length > 0); }
++  assert.equal(new Set(AGGRESSIVE_PRESETS.map((p) => p.id)).size, AGGRESSIVE_PRESETS.length);
++});
++test('resolveRisk accepts ids/labels case-insensitively and rejects unknown input without substituting', () => {
++  assert.deepEqual(resolveRisk('long shot'), { kind: 'standard', level: 'Long Shot' });
++  assert.equal(resolveRisk('Moonshot')?.kind, 'preset');
++  assert.equal(resolveRisk('high-roller')?.kind, 'preset');
++  assert.equal(resolveRisk('yolo'), null);
++  assert.equal(resolveRisk(7), null);
++});
++test('choices list the four standard levels first and flag presets as optional', () => {
++  const c = allRiskChoices();
++  assert.deepEqual(c.slice(0, 4).map((x) => x.id), ['Safer', 'Balanced', 'Aggressive', 'Long Shot']);
++  assert.ok(c.slice(0, 4).every((x) => !x.optional));
++  assert.ok(c.slice(4).every((x) => x.optional));
++});
+diff --git a/nfl-parlay-lab/tests/sports-registry.test.ts b/nfl-parlay-lab/tests/sports-registry.test.ts
+new file mode 100644
+index 0000000..92c6955
+--- /dev/null
++++ b/nfl-parlay-lab/tests/sports-registry.test.ts
+@@ -0,0 +1,47 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { SPORT_IDS } from '../src/lib/sports/types.ts';
++import { listSports, getSport, resolveSport, isSportId, implementedSports } from '../src/lib/sports/registry.ts';
++import { SLOTS, MAX_LEGS_PER_GAME } from '../src/lib/optimizer.ts';
++import { PROP_STATS } from '../src/lib/propMarkets.ts';
++
++test('registry covers NFL, NBA, MLB, NHL and MMA, each exactly once', () => {
++  assert.deepEqual(listSports().map((s) => s.id), [...SPORT_IDS]);
++  assert.deepEqual([...SPORT_IDS], ['nfl', 'nba', 'mlb', 'nhl', 'mma']);
++});
++test('NFL descriptor reads live optimizer/market constants and is the only implemented sport', () => {
++  const nfl = getSport('nfl');
++  assert.deepEqual(nfl.ticketRules.slots, SLOTS);
++  assert.equal(nfl.ticketRules.maxLegsPerGame, MAX_LEGS_PER_GAME);
++  assert.equal(nfl.ticketRules.legs, 6);
++  assert.equal(nfl.ticketRules.provisional, false);
++  assert.equal(nfl.providerSportKey, 'football_nfl');
++  for (const d of Object.values(PROP_STATS)) assert.ok(nfl.markets.some((m) => m.id === d.market), d.market);
++  assert.ok(nfl.markets.some((m) => m.id === 'player_anytime_td'));
++  assert.deepEqual(implementedSports().map((s) => s.id), ['nfl']);
++});
++test('planned sports invent no provider keys and mark every market unverified', () => {
++  for (const id of ['nba', 'mlb', 'nhl', 'mma'] as const) {
++    const s = getSport(id);
++    assert.equal(s.status, 'planned');
++    assert.equal(s.providerSportKey, null);
++    assert.equal(s.ticketRules.provisional, true);
++    assert.equal(s.ticketRules.legs, 6);
++    assert.ok(s.markets.length > 0);
++    assert.ok(s.markets.every((m) => m.coverage === 'unverified'), id);
++  }
++});
++test('MMA/UFC lists winner, round total, method, KO/TKO, submission and decision plus fighter props', () => {
++  const ids = getSport('mma').markets.map((m) => m.id);
++  for (const id of ['fight_winner', 'round_total', 'method_of_victory', 'ko_tko', 'submission', 'decision']) assert.ok(ids.includes(id), id);
++  assert.equal(getSport('mma').participantNoun, 'fighter');
++  assert.ok(getSport('mma').markets.some((m) => m.scope === 'fighter'));
++});
++test('market ids are unique within a sport; unknown sport input falls back to NFL', () => {
++  for (const s of listSports()) assert.equal(new Set(s.markets.map((m) => m.id)).size, s.markets.length, s.id);
++  assert.equal(resolveSport(undefined).id, 'nfl');
++  assert.equal(resolveSport('cricket').id, 'nfl');
++  assert.equal(resolveSport('nba').id, 'nba');
++  assert.equal(isSportId('mma'), true);
++  assert.equal(isSportId('NFL'), false);
++});
+diff --git a/nfl-parlay-lab/tests/stake.test.ts b/nfl-parlay-lab/tests/stake.test.ts
+new file mode 100644
+index 0000000..2f9ee41
+--- /dev/null
++++ b/nfl-parlay-lab/tests/stake.test.ts
+@@ -0,0 +1,23 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { PAPER_STAKE_CENTS } from '../src/lib/paper.ts';
++import { DEFAULT_PAPER_STAKE_CENTS, parseStake, effectiveStakeCents } from '../src/lib/stake.ts';
++
++test('default paper stake is $10 and equals the existing NFL constant', () => {
++  assert.equal(DEFAULT_PAPER_STAKE_CENTS, 1000);
++  assert.equal(DEFAULT_PAPER_STAKE_CENTS, PAPER_STAKE_CENTS);
++});
++test('parseStake accepts dollars, $-prefixed text and cents without float error', () => {
++  assert.deepEqual(parseStake('10'), { ok: true, cents: 1000 });
++  assert.deepEqual(parseStake(' $12.5 '), { ok: true, cents: 1250 });
++  assert.deepEqual(parseStake(0.1 + 0.2 > 0 ? '19.99' : ''), { ok: true, cents: 1999 });
++  assert.deepEqual(parseStake(25), { ok: true, cents: 2500 });
++  assert.deepEqual(parseStake('1000'), { ok: true, cents: 100000 });
++});
++test('parseStake rejects invalid, too small/large, negative and over-precise input', () => {
++  for (const bad of ['', 'abc', '-5', '0', '0.50', '1000.01', '10.001', '1e3', null, undefined, NaN, {}]) assert.equal(parseStake(bad).ok, false, String(bad));
++});
++test('effectiveStakeCents falls back to $10 for missing or invalid stored values', () => {
++  assert.equal(effectiveStakeCents(2500), 2500);
++  for (const bad of [undefined, null, 0, 99, 100001, 12.5, '1000', NaN]) assert.equal(effectiveStakeCents(bad), 1000, String(bad));
++});
+-- 
+2.43.0
+

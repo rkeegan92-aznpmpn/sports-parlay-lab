@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server';
 import {getDb} from '@/server/db.ts';
 import {cachedProviderFetch} from '@/server/load.ts';
-import {paperGames,paperSelection,resolvePaperSelection,savePaperSelection,paperDashboard,paperSlates,paperWindow,paperConfig,updatePaperConfig,previewPaper,capturePaperSlate,gradePaperWagers,paperKeys,PaperError} from '@/server/paper.ts';
+import {paperGames,paperSelection,resolvePaperSelection,savePaperSelection,paperDashboard,paperSlates,paperWindow,paperConfig,updatePaperConfig,setPaperStake,previewPaper,capturePaperSlate,gradePaperWagers,paperKeys,PaperError} from '@/server/paper.ts';
 import {PAPER_STRATEGIES,type PaperStrategy} from '@/lib/paper.ts';
 const headers={'Cache-Control':'no-store'};
 export const dynamic='force-dynamic';
@@ -12,6 +12,7 @@ export async function POST(request:Request){try{
  const text=await request.text();if(text.length>1500)return NextResponse.json({error:'Request too large.'},{status:413,headers});let body;try{body=JSON.parse(text);}catch{return NextResponse.json({error:'Invalid paper action JSON.'},{status:400,headers});}
  if(!body||typeof body!=='object'||Array.isArray(body))throw new PaperError('Send a paper action object.');
  const db=getDb(),f=cachedProviderFetch(db),now=Date.now();
+ if(body.action==='stake')return NextResponse.json({stakeCents:setPaperStake(db,body.stake,now)},{headers});
  if(body.action==='settings')return NextResponse.json({config:updatePaperConfig(db,body.config,now)},{headers});
  if(body.action==='selection')return NextResponse.json({selection:savePaperSelection(db,body.selection,await paperGames(f,now),Date.now())},{headers});
  if(body.action==='grade')return NextResponse.json({grading:await gradePaperWagers(db,f,now),dashboard:paperDashboard(db,now)},{headers});

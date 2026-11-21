@@ -1,0 +1,36 @@
+name: Sports Parlay Lab verification
+on:
+  push:
+    branches: [integrate-claude-stage1-stage2]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Unit and integration tests
+        run: npm test
+      - name: TypeScript verification
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
+      - name: Install browser E2E dependencies
+        run: |
+          python3 -m pip install --user playwright
+          sudo apt-get update
+          sudo apt-get install -y chromium
+      - name: End-to-end workflows
+        env:
+          CHROMIUM_PATH: /usr/bin/chromium
+        run: npm run test:e2e

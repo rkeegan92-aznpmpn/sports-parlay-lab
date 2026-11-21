@@ -1,4 +1,4 @@
-import {PAPER_SCHEMA} from './paperSchema.ts';
+import {PAPER_SCHEMA,ensurePaperStake} from './paperSchema.ts';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -72,6 +72,7 @@ export function getDb() {
     const file = databaseFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     db = new Database(file); db.pragma('journal_mode = WAL'); db.pragma('busy_timeout = 5000'); db.exec(SCHEMA);
+    ensurePaperStake(db as never);
     const gradeColumns=db.pragma('table_info(saved_ticket_grades)') as {name:string}[];
     if(!gradeColumns.some(c=>c.name==='finalized'))db.exec('ALTER TABLE saved_ticket_grades ADD COLUMN finalized INTEGER NOT NULL DEFAULT 0');
     const collectorColumns = db.pragma('table_info(collector_state)') as {name:string}[];
@@ -79,6 +80,7 @@ export function getDb() {
     if (!collectorColumns.some(c=>c.name==='credential_fingerprint')) db.exec('ALTER TABLE collector_state ADD COLUMN credential_fingerprint TEXT');
     if (!collectorColumns.some(c=>c.name==='process_id')) db.exec('ALTER TABLE collector_state ADD COLUMN process_id INTEGER');
     const savedColumns = db.pragma('table_info(saved_tickets)') as { name: string }[];
+    if (!savedColumns.some((column) => column.name === 'sport')) db.exec("ALTER TABLE saved_tickets ADD COLUMN sport TEXT NOT NULL DEFAULT 'nfl'");
     if (!savedColumns.some((column) => column.name === 'purpose')) {
       db.exec("ALTER TABLE saved_tickets ADD COLUMN purpose TEXT NOT NULL DEFAULT 'legacy-research'");
     }
