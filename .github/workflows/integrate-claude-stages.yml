@@ -25,5 +25,12 @@ jobs:
         run: npm run typecheck
       - name: Production build
         run: npm run build
+      - name: Install browser E2E dependencies
+        run: |
+          python3 -m pip install --user playwright
+          sudo apt-get update
+          sudo apt-get install -y chromium
       - name: End-to-end workflows
+        env:
+          CHROMIUM_PATH: /usr/bin/chromium
         run: npm run test:e2e
