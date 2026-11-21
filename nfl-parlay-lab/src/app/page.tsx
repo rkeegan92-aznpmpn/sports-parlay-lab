@@ -1,5 +1,5 @@
-import Link from 'next/link';
 'use client';
+import Link from 'next/link';
 import PaperBettingWorkspace from './components/PaperBettingWorkspace';
 import MultiProviderWorkspace from './components/MultiProviderWorkspace';
 import MarketExplorer from './components/MarketExplorer';
