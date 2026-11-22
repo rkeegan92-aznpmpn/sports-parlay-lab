@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { MARKET_CATALOG, type SportId } from '@/lib/sports/catalog';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type Sport = SportId;
 const sports: { id: Sport; title: string; detail: string }[] = [
@@ -14,6 +14,16 @@ const sports: { id: Sport; title: string; detail: string }[] = [
 
 export default function SportsHome() {
   const [selected, setSelected] = useState<Sport>('NFL');
+  const [feed, setFeed] = useState<{status: string; fetchedAt?: string | null; quotaRemaining?: string | null; data?: unknown; error?: string} | null>(null);
+  useEffect(() => {
+    let active = true;
+    setFeed(null);
+    fetch(`/api/sports/odds?sport=${selected}`, { cache: 'no-store' })
+      .then(async response => response.json())
+      .then(result => { if (active) setFeed(result); })
+      .catch(() => { if (active) setFeed({ status: 'unavailable', error: 'Could not load odds feed' }); });
+    return () => { active = false; };
+  }, [selected]);
   const current = sports.find((sport) => sport.id === selected)!;
   return (
     <main className="mx-auto max-w-4xl p-6 space-y-6">
@@ -33,6 +43,15 @@ export default function SportsHome() {
       <section aria-live="polite" className="rounded-lg border p-5 space-y-3">
         <h2 className="text-xl font-semibold">{current.id} — {current.title}</h2>
         <p>{current.detail}</p>
+        <div className="rounded border p-3 space-y-1">
+          <strong>PropLine daily odds snapshot</strong>
+          <p role="status">Status: {feed?.status ?? 'Loading'}</p>
+          <p>Last fetched: {feed?.fetchedAt ? new Date(feed.fetchedAt).toLocaleString() : 'Not yet'}</p>
+          {feed?.quotaRemaining != null && <p>API requests remaining today: {feed.quotaRemaining}</p>}
+          {feed?.error && <p>{feed.error}</p>}
+          {Array.isArray(feed?.data) && <p>Events returned: {feed.data.length}</p>}
+          <p className="text-sm">Odds are snapshots, not guaranteed current prices. Refreshes after 24 hours while the app is running and accessed; scheduled unattended collection requires separate hosting.</p>
+        </div>
         <h3 className="font-semibold">Planned markets (not connected to live odds)</h3>
         <ul className="list-disc pl-5">{MARKET_CATALOG[selected].map((market) => <li key={market.key}>{market.label}</li>)}</ul>
         {selected === 'NFL' ? (
