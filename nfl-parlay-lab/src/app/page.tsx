@@ -272,7 +272,7 @@ function LiveHome() {
   return (
     <main className="mx-auto max-w-6xl space-y-3 p-3">
       <header className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-bold">NFL Parlay <span className="text-neon">Lab</span></h1>
+        <h1 className="text-xl font-bold">Sports Parlay <span className="text-neon">Lab</span></h1>
         <span className="rounded border border-amber-400 bg-amber-950/40 px-2 py-1 text-xs font-bold text-amber-200">
           PRE-GAME RESEARCH: {bt?.validationStatus === 'validated' ? 'BACKTESTED' : 'UNVALIDATED MODEL'}
         </span>
